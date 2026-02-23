@@ -1,0 +1,18 @@
+# PowerShell module artifacts
+*.dll
+*.pdb
+
+# Test results (regenerated)
+TEST_RESULTS.md
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
