@@ -56,9 +56,10 @@ en-US/*.help.txt
 .env.local
 *.local.ps1
 
-# Machine-specific manifest variants (per-host customizations, not for public history)
-*-dtm-p1gen7.psd1
-*-dtm-p1gen7.ps1
+# NOTE: Per-machine PowerShell variants (e.g. CargoTools-<host>.psd1,
+# Private/Environment-<host>.ps1) are intentionally TRACKED so build
+# issues on a specific machine can be reproduced. Add new variants with
+# a hyphenated host suffix (e.g. -dtm-p1gen7).
 
 # Internal helper scripts
 .claude/_run-full-tests.ps1
