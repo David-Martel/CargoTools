@@ -1,0 +1,148 @@
+name: Pester
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref so PR pushes don't queue.
+concurrency:
+  group: pester-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test-windows-pwsh:
+    name: Pester / windows-latest / pwsh (PS Core)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester 5
+        shell: pwsh
+        run: |
+          Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          Get-Module Pester -ListAvailable | Select-Object Name, Version | Format-Table
+
+      - name: Deploy CargoTools wrappers (so wrapper-presence tests pass)
+        shell: pwsh
+        run: |
+          # Force redeploy; CI runner ~/bin and ~/.local/bin are empty.
+          ./tools/Install-Wrappers.ps1 -Force
+
+      - name: Run Pester (full suite)
+        shell: pwsh
+        run: |
+          Import-Module ./CargoTools.psd1 -Force
+          $config = New-PesterConfiguration
+          $config.Run.Path = './Tests/'
+          $config.Run.PassThru = $true
+          $config.Run.Throw = $true
+          $config.Output.Verbosity = 'Detailed'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputFormat = 'NUnitXml'
+          $config.TestResult.OutputPath = 'pester-windows-pwsh.xml'
+          Invoke-Pester -Configuration $config
+
+      - name: Upload Pester results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pester-windows-pwsh
+          path: pester-windows-pwsh.xml
+          if-no-files-found: warn
+
+  test-linux-pwsh:
+    name: Pester / ubuntu-latest / pwsh (PS Core, non-Integration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester 5
+        shell: pwsh
+        run: |
+          Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: Run Pester (Integration tag excluded — Linux runner lacks Windows toolchain)
+        shell: pwsh
+        run: |
+          Import-Module ./CargoTools.psd1 -Force
+          $config = New-PesterConfiguration
+          $config.Run.Path = './Tests/'
+          $config.Run.PassThru = $true
+          $config.Run.Throw = $true
+          $config.Filter.ExcludeTag = @('Integration')
+          $config.Output.Verbosity = 'Detailed'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputFormat = 'NUnitXml'
+          $config.TestResult.OutputPath = 'pester-linux-pwsh.xml'
+          Invoke-Pester -Configuration $config
+
+      - name: Upload Pester results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pester-linux-pwsh
+          path: pester-linux-pwsh.xml
+          if-no-files-found: warn
+
+  script-analyzer:
+    name: PSScriptAnalyzer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: Install-Module -Name PSScriptAnalyzer -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: Analyze module sources
+        shell: pwsh
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path . -Recurse `
+            -ExcludeRule PSAvoidUsingWriteHost,PSUseShouldProcessForStateChangingFunctions,PSAvoidUsingPositionalParameters `
+            -Severity @('Error','Warning') |
+            Where-Object {
+              $_.ScriptPath -notmatch '\\Tests\\' -and
+              $_.ScriptPath -notmatch '\\\.claude\\' -and
+              $_.ScriptPath -notmatch 'dtm-p1gen7'
+            }
+          if ($results) {
+            $results | Format-Table -AutoSize
+            Write-Host "::warning::PSScriptAnalyzer reported $($results.Count) finding(s) (advisory)."
+          } else {
+            Write-Host '[OK] No PSScriptAnalyzer Error/Warning findings on tracked sources.'
+          }
+        # Advisory only for now; flip to `exit 1` once the existing baseline is clean.
+        continue-on-error: true
+
+  wrapper-smoke:
+    name: Wrapper CLI smoke test
+    runs-on: windows-latest
+    needs: test-windows-pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Smoke-test wrapper flags
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # --version (must print 3 version lines)
+          $vOut = pwsh -NoProfile -File ./wrappers/cargo.ps1 --version
+          if ($vOut -notmatch 'CargoTools wrapper/cargo v\d+\.\d+\.\d+') { throw "--version output unexpected: $vOut" }
+
+          # --help (must include WRAPPER FLAGS section)
+          $hOut = (pwsh -NoProfile -File ./wrappers/cargo.ps1 --help) -join "`n"
+          if ($hOut -notmatch 'WRAPPER FLAGS') { throw '--help missing WRAPPER FLAGS' }
+
+          # --diagnose (must emit valid JSON on stdout)
+          $jOut = pwsh -NoProfile -File ./wrappers/cargo.ps1 --diagnose
+          $obj  = $jOut | Where-Object { $_ -match '^\s*\{' } | Select-Object -First 1 | ConvertFrom-Json
+          if (-not $obj.wrapper) { throw '--diagnose JSON missing wrapper field' }
+          if ($null -eq $obj.exit_code) { throw '--diagnose JSON missing exit_code field' }
+          Write-Host "[OK] cargo --diagnose: wrapper=$($obj.wrapper) exit_code=$($obj.exit_code) checks=$($obj.checks.Count)"
