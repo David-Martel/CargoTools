@@ -1,0 +1,57 @@
+# PowerShell module artifacts
+*.bak
+*.tmp
+*.log
+
+# Test output
+TestResults/
+coverage/
+*.cover
+*.coverage
+*.coveragexml
+
+# Pester results
+*Result.xml
+*.xunit.xml
+
+# Build artifacts (Rust caches that may end up in working tree)
+target/
+Cargo.lock
+**/*.rs.bk
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# OneDrive lock/sync artifacts
+*.lock
+~$*
+
+# Local context (per ~/.claude/CLAUDE.md convention: .md tracked, .json/.cache gitignored)
+.claude/context/*.json
+.claude/context/slices/
+.claude/projects/
+.claude/debug/
+.claude/cache/
+.claude/settings.local.json
+
+# Serena LSP cache
+.serena/cache/
+.serena/memories/
+
+# Help generation artifacts
+en-US/*.cab
+en-US/*.help.txt
+
+# Local env
+.env
+.env.local
+*.local.ps1

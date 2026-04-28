@@ -1,0 +1,50 @@
+{
+  "DTM-WORK": {
+    "CargoHome": "C:\\Users\\david\\.cargo",
+    "BuildJobs": 16,
+    "SccacheIdleTimeout": "600",
+    "RustupHome": "C:\\Users\\david\\.rustup",
+    "SccacheDir": "T:\\RustCache\\sccache",
+    "LastSeen": "2026-02-28T02:38:54.6077073-05:00",
+    "CacheRoot": "T:\\RustCache",
+    "SccacheCacheSize": "30G",
+    "Hostname": "DTM-WORK",
+    "CargoTargetDir": "T:\\RustCache\\cargo-target"
+  },
+  "DTM-P1GEN7": {
+    "RustupHome": "T:\\RustCache\\rustup",
+    "BuildJobs": 4,
+    "CargoHome": "T:\\RustCache\\cargo-home",
+    "SccacheCacheSize": "30G",
+    "Hostname": "DTM-P1GEN7",
+    "SccacheIdleTimeout": "600",
+    "LastSeen": "2026-02-28T16:59:03.8503887-05:00",
+    "CacheRoot": "T:\\RustCache",
+    "CargoTargetDir": "T:\\RustCache\\cargo-target",
+    "SccacheDir": "T:\\RustCache\\sccache"
+  },
+  "DTM-CARBON-TWO": {
+    "VsPath": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community",
+    "QueueStaleMinutes": 240,
+    "MsvcBinDir": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64",
+    "BuildJobs": 4,
+    "WindowsSdkUcrtLib": "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.26100.0\\ucrt\\x64",
+    "MaxConcurrentBuilds": 1,
+    "QueuePollIntervalMs": 500,
+    "LastSeen": "2026-03-07T01:25:53.0399475-05:00",
+    "RustupHome": "C:\\Users\\david\\.rustup",
+    "TargetMode": "local",
+    "MsvcVersion": "14.44.35207",
+    "MsvcLibDir": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\lib\\x64",
+    "SccacheDir": "C:\\Users\\david\\AppData\\Local\\RustCache\\sccache",
+    "WindowsSdkUmLib": "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.26100.0\\um\\x64",
+    "CacheRoot": "C:\\Users\\david\\AppData\\Local\\RustCache",
+    "CargoTargetDir": "C:\\Users\\david\\AppData\\Local\\RustCache\\cargo-target",
+    "CargoHome": "C:\\Users\\david\\.cargo",
+    "SccacheIdleTimeout": "3600",
+    "WindowsSdkVersion": "10.0.26100.0",
+    "MsvcLinkExe": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\link.exe",
+    "Hostname": "DTM-CARBON-TWO",
+    "SccacheCacheSize": "30G"
+  }
+}
