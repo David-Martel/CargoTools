@@ -58,7 +58,15 @@ $wrappers = @(
     @{ Dir = $localBin; Name = 'rust-analyzer.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\rust-analyzer.ps1" },
     @{ Dir = $localBin; Name = 'rust-analyzer-wrapper.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\rust-analyzer-wrapper.ps1" },
     @{ Dir = $userBin;  Name = '_WrapperHelpers.psm1'; Type = 'file'; Source = "$moduleRoot\wrappers\_WrapperHelpers.psm1" },
-    @{ Dir = $userBin;  Name = 'cargo-wrapper.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\cargo-wrapper.ps1" }
+    @{ Dir = $userBin;  Name = 'cargo.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\cargo.ps1" },
+    @{ Dir = $userBin;  Name = 'cargo-route.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\cargo-route.ps1" },
+    @{ Dir = $userBin;  Name = 'cargo-wrapper.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\cargo-wrapper.ps1" },
+    @{ Dir = $userBin;  Name = 'cargo-wsl.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\cargo-wsl.ps1" },
+    @{ Dir = $userBin;  Name = 'cargo-docker.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\cargo-docker.ps1" },
+    @{ Dir = $userBin;  Name = 'cargo-macos.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\cargo-macos.ps1" },
+    @{ Dir = $userBin;  Name = 'maturin.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\maturin.ps1" },
+    @{ Dir = $userBin;  Name = 'rust-analyzer.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\rust-analyzer.ps1" },
+    @{ Dir = $userBin;  Name = 'rust-analyzer-wrapper.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\rust-analyzer-wrapper.ps1" }
 )
 
 # .cmd shims to generate (for each .ps1 in ~/.local/bin)
