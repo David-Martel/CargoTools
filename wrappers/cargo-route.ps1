@@ -1,38 +1,37 @@
+#Requires -Version 5.1
+# cargo-route.ps1 — CargoTools v0.9.0 routing shim
+# Loads CargoTools module and calls Invoke-CargoRoute.
 [CmdletBinding()]
 param(
     [Parameter(ValueFromRemainingArguments = $true, Position = 0)]
     [string[]]$ArgumentList
 )
+$ErrorActionPreference = 'Stop'
 
-$moduleName = 'CargoTools'
-$moduleCandidates = @(
-    $env:CARGOTOOLS_MANIFEST,
-    (Join-Path $env:LOCALAPPDATA 'PowerShell\Modules\CargoTools\CargoTools.psd1'),
-    (Join-Path (Split-Path -Parent $PSScriptRoot) 'CargoTools.psd1'),
-    (Join-Path $env:USERPROFILE 'OneDrive\Documents\PowerShell\Modules\CargoTools\CargoTools.psd1')
-) | Where-Object { $_ } | Select-Object -Unique
+Import-Module (Join-Path $PSScriptRoot '_WrapperHelpers.psm1') -Force
 
-$moduleImported = $false
-foreach ($modulePath in $moduleCandidates) {
-    if (-not (Test-Path $modulePath)) { continue }
-    Import-Module $modulePath -ErrorAction Stop
-    $moduleImported = $true
-    break
+$ctx = Get-WrapperContext -InvocationArgs $ArgumentList -WrapperName 'cargo-route'
+
+if ($ctx.HelpRequested)    { Show-WrapperHelp -WrapperName 'cargo-route' -RemainingArgs $ctx.PassThrough; exit 0 }
+if ($ctx.VersionRequested) { Show-WrapperVersion -WrapperName 'cargo-route'; exit 0 }
+if ($ctx.DoctorRequested)  { exit (Invoke-WrapperDoctor -WrapperName 'cargo-route' -AsJson:$ctx.DiagnoseRequested) }
+if ($ctx.ListRequested)    { Show-WrapperList; exit 0 }
+
+if ($ctx.NoWrapper -or $env:CARGO_RAW -eq '1') {
+    $rustup = Get-Command rustup -ErrorAction SilentlyContinue
+    if (-not $rustup) { Write-Host '[ERROR] rustup not found.' -ForegroundColor Red; exit 3 }
+    & rustup run stable cargo @($ctx.PassThrough)
+    exit $LASTEXITCODE
 }
 
-if (-not $moduleImported) {
-    try {
-        Import-Module $moduleName -ErrorAction Stop
-        $moduleImported = $true
-    } catch {
-    }
-}
+if (-not (Import-CargoToolsResilient -EmitLlm:$ctx.LlmMode)) { exit 2 }
 
-if (-not $moduleImported) {
-    Write-Error "CargoTools module not found. Tried: $($moduleCandidates -join ', ')"
-    exit 1
-}
+Write-LlmEvent -Phase start -Wrapper cargo-route -Args $ctx.PassThrough -EmitLlm:$ctx.LlmMode
+$start = Get-Date
 
-$code = Invoke-CargoRoute -ArgumentList $ArgumentList
+$code = Invoke-CargoRoute -ArgumentList $ctx.PassThrough
 if ($null -eq $code) { $code = $LASTEXITCODE }
+
+Write-LlmEvent -Phase end -Wrapper cargo-route -ExitCode $code `
+    -DurationMs ([int]((Get-Date) - $start).TotalMilliseconds) -EmitLlm:$ctx.LlmMode
 exit $code

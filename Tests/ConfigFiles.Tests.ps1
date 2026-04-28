@@ -430,6 +430,19 @@ Describe 'Get-DefaultCargoConfig' {
         $normalized.Config['cargo-new'].Contains('edition') | Should -BeFalse
         $normalized.Changes | Should -Contain 'Removed unsupported cargo-new.edition key'
     }
+    It 'Removes alias.fix because Cargo has a built-in fix command' {
+        $existing = [ordered]@{
+            alias = [ordered]@{
+                fix = 'fmt --all'
+                c = 'check'
+            }
+        }
+
+        $normalized = & $script:NormalizeCargoUnsupportedKeys -Config $existing
+        $normalized.Config['alias'].Contains('c') | Should -BeTrue
+        $normalized.Config['alias'].Contains('fix') | Should -BeFalse
+        $normalized.Changes | Should -Contain 'Removed alias.fix because it is shadowed by Cargo built-in command'
+    }
 }
 
 Describe 'Get-DefaultRustfmtConfig' {

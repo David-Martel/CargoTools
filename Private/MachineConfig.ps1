@@ -383,8 +383,18 @@ function Get-MsvcInfo {
         foreach ($candidate in $candidates) {
             $toolsRoot = Join-Path $candidate 'VC\Tools\MSVC'
             if (Test-Path $toolsRoot) {
-                $vsPath = $candidate
-                break
+                $validToolDir = Get-ChildItem -Path $toolsRoot -Directory -ErrorAction SilentlyContinue |
+                    Where-Object {
+                        $_.Name -notmatch '\.(broken|disabled|bak|old)$' -and
+                        (Test-Path (Join-Path $_.FullName 'bin\Hostx64\x64\cl.exe')) -and
+                        (Test-Path (Join-Path $_.FullName 'bin\Hostx64\x64\link.exe'))
+                    } |
+                    Select-Object -First 1
+
+                if ($validToolDir) {
+                    $vsPath = $candidate
+                    break
+                }
             }
         }
     }
@@ -395,9 +405,16 @@ function Get-MsvcInfo {
     $msvcBase = Join-Path $vsPath 'VC\Tools\MSVC'
     if (-not (Test-Path $msvcBase)) { return $null }
 
-    $msvcVer = Get-ChildItem -Path $msvcBase -Directory |
-        Sort-Object Name -Descending |
-        Select-Object -First 1 -ExpandProperty Name
+    $msvcToolDir = Get-ChildItem -Path $msvcBase -Directory |
+        Where-Object {
+            $_.Name -notmatch '\.(broken|disabled|bak|old)$' -and
+            (Test-Path (Join-Path $_.FullName 'bin\Hostx64\x64\cl.exe')) -and
+            (Test-Path (Join-Path $_.FullName 'bin\Hostx64\x64\link.exe'))
+        } |
+        Sort-Object @{ Expression = { [version]$_.Name }; Descending = $true } |
+        Select-Object -First 1
+
+    $msvcVer = if ($msvcToolDir) { $msvcToolDir.Name } else { $null }
 
     if (-not $msvcVer) { return $null }
 

@@ -47,6 +47,7 @@ $moduleRoot = Split-Path -Parent $PSScriptRoot
 # Wrapper definitions: TargetDir, FileName, SourceType (module|file), Source
 # module = generate from template; file = copy from existing location
 $wrappers = @(
+    @{ Dir = $localBin; Name = '_WrapperHelpers.psm1'; Type = 'file'; Source = "$moduleRoot\wrappers\_WrapperHelpers.psm1" },
     @{ Dir = $localBin; Name = 'cargo.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\cargo.ps1" },
     @{ Dir = $localBin; Name = 'cargo-route.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\cargo-route.ps1" },
     @{ Dir = $localBin; Name = 'cargo-wrapper.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\cargo-wrapper.ps1" },
@@ -56,6 +57,7 @@ $wrappers = @(
     @{ Dir = $localBin; Name = 'maturin.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\maturin.ps1" },
     @{ Dir = $localBin; Name = 'rust-analyzer.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\rust-analyzer.ps1" },
     @{ Dir = $localBin; Name = 'rust-analyzer-wrapper.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\rust-analyzer-wrapper.ps1" },
+    @{ Dir = $userBin;  Name = '_WrapperHelpers.psm1'; Type = 'file'; Source = "$moduleRoot\wrappers\_WrapperHelpers.psm1" },
     @{ Dir = $userBin;  Name = 'cargo-wrapper.ps1'; Type = 'file'; Source = "$moduleRoot\wrappers\cargo-wrapper.ps1" }
 )
 
@@ -235,7 +237,7 @@ function Show-InstallSummary {
 
 # --- Main ---
 
-Write-Host "CargoTools Wrapper Installer v0.6.0" -ForegroundColor Cyan
+Write-Host "CargoTools Wrapper Installer v0.9.0" -ForegroundColor Cyan
 Write-Host "Module: $moduleRoot" -ForegroundColor DarkGray
 
 # Check that wrappers/ source directory exists
@@ -306,3 +308,28 @@ if ($pathChanged -and -not $DryRun) {
 }
 
 Show-InstallSummary -Installed $installed -Updated $updated -Skipped $skipped -Errors $errors
+
+# Post-deploy verification
+if (-not $DryRun -and -not $Uninstall) {
+    Write-Host ''
+    Write-Host 'Post-deploy verification...' -ForegroundColor White
+    $helperPath = Join-Path $localBin '_WrapperHelpers.psm1'
+    if (Test-Path $helperPath) {
+        try {
+            Import-Module $helperPath -Force -ErrorAction Stop
+            $deployedVer = Get-CargoToolsVersion
+            $manifestPath = Join-Path $moduleRoot 'CargoTools.psd1'
+            $manifestData = Import-PowerShellDataFile -Path $manifestPath -ErrorAction SilentlyContinue
+            $expectedVer = if ($manifestData) { $manifestData.ModuleVersion } else { '?' }
+            if ($deployedVer -eq $expectedVer) {
+                Write-Host "  [OK] _WrapperHelpers version $deployedVer matches manifest" -ForegroundColor Green
+            } else {
+                Write-Host "  [WARN] Version mismatch: deployed=$deployedVer manifest=$expectedVer" -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "  [WARN] Could not verify _WrapperHelpers: $_" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  [WARN] _WrapperHelpers.psm1 not found at $helperPath" -ForegroundColor Yellow
+    }
+}

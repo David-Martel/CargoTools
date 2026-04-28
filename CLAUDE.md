@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-CargoTools is a PowerShell module (v0.8.0) that wraps `cargo` for Windows, WSL, and Docker builds with automatic sccache integration, smart tool detection, LLM-friendly diagnostics, cross-target routing, and global config management. Requires PowerShell 5.1+ (Desktop and Core).
+CargoTools is a PowerShell module (v0.9.0) that wraps `cargo` for Windows, WSL, and Docker builds with automatic sccache integration, smart tool detection, LLM-friendly diagnostics, cross-target routing, and global config management. Requires PowerShell 5.1+ (Desktop and Core).
 
 ## Build & Test Commands
 

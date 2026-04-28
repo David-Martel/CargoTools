@@ -1,38 +1,44 @@
-<#
-.SYNOPSIS
-Maturin wrapper with automatic venv detection and sccache support.
-.DESCRIPTION
-Transparently handles Python venv activation, sccache compatibility, and
-delegates to maturin.exe. All arguments pass through unchanged.
-.NOTES
-Place alongside maturin.exe in PATH. Requires CargoTools module for sccache management.
-#>
+#Requires -Version 5.1
+# maturin.ps1 — CargoTools v0.9.0 maturin wrapper
+# Preserves venv detection. Adds wrapper flags + sccache integration.
+[CmdletBinding()]
 param(
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$Arguments
+    [Parameter(ValueFromRemainingArguments = $true, Position = 0)]
+    [string[]]$ArgumentList
 )
-
 $ErrorActionPreference = 'Stop'
 
-# Locate maturin.exe in the same directory as this script
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Import-Module (Join-Path $PSScriptRoot '_WrapperHelpers.psm1') -Force
+
+$ctx = Get-WrapperContext -InvocationArgs $ArgumentList -WrapperName 'maturin'
+
+if ($ctx.HelpRequested)    { Show-WrapperHelp -WrapperName 'maturin' -RemainingArgs $ctx.PassThrough; exit 0 }
+if ($ctx.VersionRequested) { Show-WrapperVersion -WrapperName 'maturin'; exit 0 }
+if ($ctx.DoctorRequested)  { exit (Invoke-WrapperDoctor -WrapperName 'maturin' -AsJson:$ctx.DiagnoseRequested) }
+if ($ctx.ListRequested)    { Show-WrapperList; exit 0 }
+
+# Locate maturin.exe alongside this wrapper script
+$scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $maturinExe = Join-Path $scriptDir 'maturin.exe'
 if (-not (Test-Path $maturinExe)) {
-    Write-Error "maturin.exe not found in $scriptDir"
-    exit 1
+    # Fallback: maturin on PATH
+    $maturinCmd = Get-Command maturin.exe -ErrorAction SilentlyContinue
+    if ($maturinCmd) {
+        $maturinExe = $maturinCmd.Source
+    } else {
+        Write-LlmEvent -Phase diagnostic -Level error -Code RUSTUP_NOT_FOUND `
+            -Detail 'maturin.exe not found alongside wrapper or on PATH' `
+            -Recovery 'Install maturin: pip install maturin' -EmitLlm:$ctx.LlmMode
+        Write-Host '[ERROR] maturin.exe not found.' -ForegroundColor Red
+        exit 3
+    }
 }
 
-$args = if ($Arguments) { @($Arguments) } else { @() }
-$noSccache = $false
-
-# Parse wrapper-only flags
-$passThrough = @()
-foreach ($arg in $args) {
-    if ($arg -eq '--no-sccache') {
-        $noSccache = $true
-    } else {
-        $passThrough += $arg
-    }
+# Parse --no-sccache from the pass-through args
+$noSccache  = $false
+$finalArgs  = [System.Collections.Generic.List[string]]::new()
+foreach ($a in $ctx.PassThrough) {
+    if ($a -eq '--no-sccache') { $noSccache = $true } else { $finalArgs.Add($a) }
 }
 
 # Detect and activate Python venv
@@ -40,54 +46,25 @@ $venvPath = $null
 if ($env:VIRTUAL_ENV) {
     $venvPath = $env:VIRTUAL_ENV
 } else {
-    $candidates = @('.venv', 'venv', '.env')
-    foreach ($dir in $candidates) {
+    foreach ($dir in @('.venv', 'venv', '.env')) {
         $candidate = Join-Path (Get-Location).Path $dir
-        if (Test-Path (Join-Path $candidate 'Scripts\python.exe')) {
-            $venvPath = $candidate
-            break
-        }
-        if (Test-Path (Join-Path $candidate 'bin/python')) {
-            $venvPath = $candidate
-            break
-        }
+        if (Test-Path (Join-Path $candidate 'Scripts\python.exe')) { $venvPath = $candidate; break }
+        if (Test-Path (Join-Path $candidate 'bin/python'))         { $venvPath = $candidate; break }
     }
 }
-
-$activatedVenv = $false
 if ($venvPath -and -not $env:VIRTUAL_ENV) {
     $activateScript = Join-Path $venvPath 'Scripts\Activate.ps1'
-    if (Test-Path $activateScript) {
-        . $activateScript
-        $activatedVenv = $true
-    }
+    if (Test-Path $activateScript) { . $activateScript }
 }
 
-# sccache setup (maturin respects RUSTC_WRAPPER)
+# sccache setup
 $savedRustcWrapper = $env:RUSTC_WRAPPER
 if ($noSccache) {
     if (Test-Path Env:RUSTC_WRAPPER) { Remove-Item Env:RUSTC_WRAPPER }
 } else {
-    # Ensure sccache is set up if CargoTools is available
-    $cargoTools = Get-Module CargoTools -ErrorAction SilentlyContinue
-    if (-not $cargoTools) {
-        $moduleCandidates = @(
-            $env:CARGOTOOLS_MANIFEST,
-            (Join-Path $env:LOCALAPPDATA 'PowerShell\Modules\CargoTools\CargoTools.psd1'),
-            (Join-Path $env:USERPROFILE 'OneDrive\Documents\PowerShell\Modules\CargoTools\CargoTools.psd1')
-        ) | Where-Object { $_ } | Select-Object -Unique
-
-        foreach ($modulePath in $moduleCandidates) {
-            if (-not (Test-Path $modulePath)) { continue }
-            $cargoTools = Import-Module $modulePath -PassThru -ErrorAction SilentlyContinue
-            if ($cargoTools) { break }
-        }
-
-        if (-not $cargoTools) {
-            $cargoTools = Import-Module CargoTools -PassThru -ErrorAction SilentlyContinue
-        }
-    }
-    if ($cargoTools) {
+    if (-not (Import-CargoToolsResilient -EmitLlm:$ctx.LlmMode)) {
+        # Non-fatal for maturin — proceed without sccache
+    } else {
         try { Start-SccacheServer | Out-Null } catch {}
     }
     if (-not $env:RUSTC_WRAPPER) {
@@ -96,14 +73,20 @@ if ($noSccache) {
     }
 }
 
+Write-LlmEvent -Phase start -Wrapper maturin -Args $finalArgs.ToArray() -EmitLlm:$ctx.LlmMode
+$start = Get-Date
+
 try {
-    & $maturinExe @passThrough
-    exit $LASTEXITCODE
+    & $maturinExe @($finalArgs.ToArray())
+    $code = $LASTEXITCODE
 } finally {
-    # Restore RUSTC_WRAPPER
     if ($null -ne $savedRustcWrapper) {
         $env:RUSTC_WRAPPER = $savedRustcWrapper
     } elseif ($noSccache -and (Test-Path Env:RUSTC_WRAPPER)) {
         Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
     }
 }
+
+Write-LlmEvent -Phase end -Wrapper maturin -ExitCode $code `
+    -DurationMs ([int]((Get-Date) - $start).TotalMilliseconds) -EmitLlm:$ctx.LlmMode
+exit $code

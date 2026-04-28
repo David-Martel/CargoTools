@@ -334,8 +334,9 @@ Describe 'System-wide shim' {
         It 'Should resolve before any rust-analyzer.exe in PATH' {
             $cmd = Get-Command rust-analyzer -ErrorAction SilentlyContinue
             if ($cmd) {
-                # Should be a local shim, not rustup's rust-analyzer.exe.
-                $cmd.Source | Should -Match '\\\.local\\bin\\rust-analyzer\.(cmd|ps1)$'
+                # Should be a CargoTools shim (.cmd or .ps1) deployed to either ~/.local/bin or ~/bin,
+                # not rustup's rust-analyzer.exe.
+                $cmd.Source | Should -Match '\\(\.local\\bin|bin)\\rust-analyzer.*\.(cmd|ps1)$'
             } else {
                 Set-ItResult -Skipped -Because 'rust-analyzer not in PATH'
             }

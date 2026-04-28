@@ -55,3 +55,10 @@ en-US/*.help.txt
 .env
 .env.local
 *.local.ps1
+
+# Machine-specific manifest variants (per-host customizations, not for public history)
+*-dtm-p1gen7.psd1
+*-dtm-p1gen7.ps1
+
+# Internal helper scripts
+.claude/_run-full-tests.ps1

@@ -12,7 +12,7 @@
 RootModule = 'CargoTools.psm1'
 
 # Version number of this module.
-ModuleVersion = '0.8.0'
+ModuleVersion = '0.9.0'
 
 # Supported PSEditions
 CompatiblePSEditions = @('Desktop','Core')
@@ -151,6 +151,7 @@ FileList = @(
     'docs\\Invoke-RustAnalyzerWrapper.md',
     'tools\\Generate-Help.ps1',
     'tools\\Install-Wrappers.ps1',
+    'wrappers\\_WrapperHelpers.psm1',
     'wrappers\\cargo.ps1',
     'wrappers\\cargo-route.ps1',
     'wrappers\\cargo-wrapper.ps1',
@@ -160,6 +161,7 @@ FileList = @(
     'wrappers\\maturin.ps1',
     'wrappers\\rust-analyzer.ps1',
     'wrappers\\rust-analyzer-wrapper.ps1',
+    'Tests\\Wrappers.Tests.ps1',
     'Public\\Test-BuildEnvironment.ps1',
     'Public\\Get-CargoQueueStatus.ps1',
     'en-US\\about_CargoTools.help.txt',

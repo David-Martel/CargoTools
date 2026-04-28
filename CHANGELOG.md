@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0
+- **Wrapper rewrite**: Replaced 9 ad-hoc wrapper shims with smart, self-healing scripts backed by a shared `wrappers/_WrapperHelpers.psm1` module. Each wrapper is now ≤60 lines of entry-point code.
+- **Standardized wrapper flags**: All wrappers now support `--help`, `-h`, `-?`, `/?`, `--version`, `--doctor`, `--diagnose`, `--llm`/`--json-output`, `--list-wrappers`, and `--no-wrapper`. Flags are stripped before forwarding to cargo.
+- **LLM JSON envelope**: `--llm` flag emits structured JSON events to stderr (`phase=start/diagnostic/action/end`) with `wrapper`, `wrapper_version`, `timestamp`, `exit_code`, `duration_ms`, and `actions_taken`.
+- **Self-healing recovery**: Six failure modes handled with structured codes — `MODULE_NOT_FOUND`, `ONEDRIVE_LOCK` (retry 3x with 200ms backoff), `SCCACHE_DEAD`, `RUSTUP_NOT_FOUND`, `PATH_SHADOWED`, `STALE_MUTEX`.
+- **Standardized exit codes**: 0=success, 1=wrapper internal error, 2=module not found, 3=required tool missing (rustup/cargo/maturin/rust-analyzer), 4=config error (--doctor red), ≥128 passed through from cargo.
+- **`--doctor` and `--diagnose`**: On-demand environment diagnostic that checks module loadability, PSModulePath, wrapper deployment, PATH, rustup, sccache, lld-link, and OneDrive .psd1 lock risk.
+- **Install-Wrappers.ps1 v0.9.0**: Deploys `_WrapperHelpers.psm1` alongside .ps1 wrappers to both `~/.local/bin` and `~/bin`. Added post-deploy verification step that imports the helper and asserts version matches manifest.
+- **Pester test suite**: New `Tests/Wrappers.Tests.ps1` covering flag parsing, LlmEvent JSON shape, MODULE_NOT_FOUND recovery, argument pass-through fidelity, per-wrapper --help/--version/--list-wrappers, and --doctor JSON schema.
+
 ## Unreleased
 - **Queued top-level builds**: Added `Private/BuildQueue.ps1` and public
   `Get-CargoQueueStatus` to serialize top-level Cargo invocations through a

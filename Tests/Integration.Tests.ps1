@@ -10,7 +10,7 @@ These tests may invoke actual Rust tooling.
 
 BeforeAll {
     $modulePath = Split-Path -Parent $PSScriptRoot
-    Import-Module (Join-Path $modulePath 'CargoTools.psd1') -Force
+    $script:ModuleUnderTest = Import-Module (Join-Path $modulePath 'CargoTools.psd1') -Force -PassThru
 }
 
 Describe 'Module Import' {
@@ -36,8 +36,9 @@ Describe 'Module Import' {
         }
     }
 
-    It 'Module version is 0.8.0' {
-        (Get-Module CargoTools).Version.ToString() | Should -Be '0.8.0'
+    It 'Module version matches manifest' {
+        $manifest = Import-PowerShellDataFile (Join-Path (Split-Path $PSScriptRoot -Parent) 'CargoTools.psd1')
+        $script:ModuleUnderTest.Version.ToString() | Should -Be $manifest.ModuleVersion
     }
 }
 
@@ -99,7 +100,7 @@ Describe 'No TRACE output at default verbosity' -Tag 'Integration' {
 
 Describe 'WSL Argument Escaping' -Tag 'Integration' {
     BeforeAll {
-        $module = Get-Module CargoTools
+        $module = $script:ModuleUnderTest
         $script:ConvertArgsToShell = & $module { ${function:Convert-ArgsToShell} }
     }
 
@@ -125,7 +126,7 @@ Describe 'WSL Argument Escaping' -Tag 'Integration' {
 
 Describe 'Cross-function dependency chain' {
     It 'Get-PrimaryCommand works with verbosity-filtered args' {
-        $module = Get-Module CargoTools
+        $module = $script:ModuleUnderTest
         $getVerbArgs = & $module { ${function:Get-VerbosityArgs} }
         $getPrimary = & $module { ${function:Get-PrimaryCommand} }
 
@@ -136,7 +137,7 @@ Describe 'Cross-function dependency chain' {
     }
 
     It 'Ensure-RunArgSeparator works after verbosity filtering' {
-        $module = Get-Module CargoTools
+        $module = $script:ModuleUnderTest
         $getVerbArgs = & $module { ${function:Get-VerbosityArgs} }
         $ensureSep = & $module { ${function:Ensure-RunArgSeparator} }
 

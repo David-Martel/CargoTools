@@ -112,7 +112,7 @@ function Initialize-ProjectCargoConfig {
 
     # Full profile: add sccache tuning
     if ($Profile -eq 'full') {
-        $envSection['SCCACHE_SERVER_PORT'] = '4226'
+        $envSection['SCCACHE_SERVER_PORT'] = '4400'
         $envSection['SCCACHE_CACHE_COMPRESSION'] = 'zstd'
         $envSection['SCCACHE_DIRECT'] = 'true'
     }

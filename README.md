@@ -1,97 +1,118 @@
 # CargoTools
 
-CargoTools provides routed Cargo wrappers for Windows, WSL, and Docker with
-shared machine-level Rust caches, sccache defaults, queued top-level builds,
-LLM-friendly diagnostics, and cross-target helpers.
+> Routed cargo wrappers for Windows, WSL, Docker, and Apple cross-compile, with shared sccache, smart defaults, LLM-friendly diagnostics, and global Rust config management.
 
-## Installation
+<!-- ci-badge -->
+<!-- pester-badge -->
+<!-- license-badge -->
 
-The canonical local module is located at:
+## What it is
 
-C:\Users\david\Documents\PowerShell\Modules\CargoTools
+CargoTools is a PowerShell module that wraps `cargo` to make Rust builds on Windows fast, predictable, and AI-agent-friendly. It auto-detects and configures sccache, lld, nextest, and Ninja; sanitises PATH against well-known toolchain conflicts; and emits structured JSON diagnostics for LLM agents. The same module routes builds to WSL, Docker, or zigbuild containers based on the `--target` triple.
 
-The OneDrive and AppData copies should be treated as synchronized mirrors of the local installed tree, not the primary edit target.
+## Highlights
 
-PowerShell auto-loads modules on demand when `CargoTools` is on PSModulePath.
+- **Smart defaults**: lld-link, cargo-nextest, Ninja, MSVC absolute paths, MAKEFLAGS — all auto-enabled when present.
+- **Shared, machine-wide cache**: `T:\RustCache` (ReFS Dev Drive) hosts `cargo-home`, `cargo-target`, `sccache`, `rustup`. Falls back to `$LOCALAPPDATA\RustCache`.
+- **Cross-target routing**: one `cargo build --target …` dispatches to Windows MSVC, WSL bash, Docker, or zigbuild automatically.
+- **Self-healing wrappers**: sccache death is detected and the build retries once; OneDrive sharing violations on the module file are retried 3x; PATH conflicts (Strawberry Perl, Git mingw64) are sanitised in-process.
+- **LLM-friendly output**: `--llm` flag emits NDJSON envelopes (`start`/`diagnostic`/`action`/`end`) on stderr while cargo output stays on stdout.
+- **Standardised wrapper UX**: every shim supports `--help`, `--version`, `--doctor`, `--diagnose`, `--llm`, `--list-wrappers`, `--no-wrapper` with consistent exit codes 0-4.
+- **Quality gate**: optional mandatory clippy `--fix` + fmt + post-build nextest + doctests, controllable via `CARGOTOOLS_ENFORCE_QUALITY`.
+- **Global Rust config management**: `Initialize-RustDefaults` merges optimal defaults into `~/.cargo/config.toml`, `~/rustfmt.toml`, `~/.clippy.toml` without overwriting user customisations.
 
-## Commands
+## Install
 
-- Invoke-CargoRoute
-- Invoke-CargoWrapper
-- Invoke-CargoWsl
-- Invoke-CargoDocker
-- Invoke-CargoMacos
-- Invoke-RustAnalyzerWrapper
-
-## Recommended Usage
-
-Use the named-parameter wrapper invocation for consistent working-directory handling:
+### From PowerShell Gallery
 
 ```powershell
-Invoke-CargoWrapper -Command fmt -WorkingDirectory <path>
-Invoke-CargoWrapper -Command clippy -AdditionalArgs @('--','-D','warnings') -WorkingDirectory <path>
-Invoke-CargoWrapper -Command test -WorkingDirectory <path>
-Invoke-CargoWrapper -Command build -AdditionalArgs @('--release') -WorkingDirectory <path>
+PS C:\> Install-Module CargoTools -Scope CurrentUser
+PS C:\> Import-Module CargoTools
 ```
 
-For cross-target builds, prefer the router:
+### From source
 
 ```powershell
-Invoke-CargoRoute --route auto -- build --release
+PS C:\> git clone <repo-url> "$HOME\Documents\PowerShell\Modules\CargoTools"
+PS C:\> Import-Module CargoTools -Force
 ```
 
-## Supplemental Commands
+### Deploy CLI shims
 
-These are useful for diagnostics, caching, and editor integration:
+The `cargo`, `rust-analyzer`, `maturin`, etc. wrappers in `~/bin` and `~/.local/bin` are not installed by `Install-Module`. Run the deployment script after the module is loaded:
 
-- `Initialize-CargoEnv`: sets up environment defaults (cache paths, toolchains).
-- `Initialize-RustDefaults`: manages the global stable Rust baseline files under the user profile, including a sanitized `~/rustfmt.toml` that serves as the default when a project does not define its own local formatter config.
-- `Start-SccacheServer` / `Stop-SccacheServer`: manage the sccache daemon.
-- `Get-BuildVersionInfo` / `Set-BuildVersionEnvironment`: derive a git-backed build version and stamp `BUILD_*`, `PCAI_*`, or other prefixed env vars for Rust and .NET builds.
-- `Resolve-CargoTargetDirectory`: resolve the effective cargo profile output path, including shared `CARGO_TARGET_DIR` scenarios.
-- `Publish-BuildArtifact`: promote a compiled artifact into a stable local output directory and emit a `.buildinfo.json` sidecar manifest.
-- `Get-CargoQueueStatus`: inspect the shared CargoTools build queue.
-- `Get-OptimalBuildJobs`: suggest parallel build job count for the host.
-- `Get-SccacheMemoryMB` / `Get-RustAnalyzerMemoryMB`: size cache and RA memory settings.
-- `Resolve-RustAnalyzerPath` / `Invoke-RustAnalyzerWrapper`: validate and launch rust-analyzer.
-- `Get-RustAnalyzerTransportStatus`: report whether CargoTools will use direct rust-analyzer or `lspmux` for the current invocation shape, plus resolved config/shim state and a timeout-bounded `lspmux status --json` probe.
-- `Test-RustAnalyzerHealth` / `Test-RustAnalyzerSingleton`: RA health and process checks.
-- `Get-CargoContextSnapshot` / `Get-RustProjectContext` / `ConvertTo-LlmContext`: collect project context for diagnostics.
-- `Format-CargoOutput` / `Format-CargoError`: normalize cargo output in logs.
+```powershell
+PS C:\> .\tools\Install-Wrappers.ps1 -DryRun    # preview
+PS C:\> .\tools\Install-Wrappers.ps1            # install .ps1 + .cmd shims
+PS C:\> .\tools\Install-Wrappers.ps1 -Uninstall # remove
+```
 
-## Help
+The script also adds `~/bin` and `~/.local/bin` to the user PATH if absent. Restart the shell after first install.
 
-- Get-Help about_CargoTools
-- Get-Help Invoke-CargoRoute -Full
-- External help is generated via platyPS into `docs\` and `en-US\CargoTools-help.xml`.
-- Regenerate help: `tools\Generate-Help.ps1`
+> **Note on OneDrive paths**: this module is most commonly cloned into `~/Documents/PowerShell/Modules/CargoTools`, which is OneDrive-synced. Builds use a non-synced cache at `T:\RustCache` (or `$LOCALAPPDATA\RustCache`), so OneDrive does not see compilation artefacts. If `Import-Module` ever fails with a sharing-violation error, the wrapper retries automatically (`ONEDRIVE_LOCK` recovery — see [`docs/troubleshooting.md`](docs/troubleshooting.md#onedrive_lock)).
 
-## Wrapper Scripts
+## Quickstart
 
-CLI shims in `C:\Users\david\.local\bin` call into this module:
+The five most common commands using the deployed wrappers:
 
-- cargo.ps1 (preferred PowerShell entry point)
-- cargo-route.ps1
-- cargo-wrapper.ps1
-- cargo-wsl.ps1
-- cargo-docker.ps1
-- cargo-macos.ps1
-- rust-analyzer.ps1
-- rust-analyzer-wrapper.ps1
+```powershell
+PS C:\> cargo build --release                          # auto-routed Windows build
+PS C:\> cargo --route wsl test --target x86_64-unknown-linux-gnu
+PS C:\> cargo --doctor                                 # full environment diagnostic
+PS C:\> cargo --llm build --release 2> build.ndjson    # JSON envelope on stderr
+PS C:\> rust-analyzer --memory-limit 4096              # singleton with watchdog
+```
 
-cmd.exe shims forward into PowerShell:
+For a non-routed direct invocation (when you don't want any backend dispatch):
 
-- cargo.cmd / cargo.bat -> cargo.ps1 (pwsh)
-- rust-analyzer.cmd -> rust-analyzer.ps1 (pwsh)
+```powershell
+PS C:\> cargo-wrapper --raw build --release            # bypass everything
+```
 
-## Notes
+## Documentation
 
-- Preflight behavior is controlled by `CARGO_PREFLIGHT_*` env vars.
-- Routing defaults can be overridden by `CARGO_ROUTE_*` env vars.
-- Shared cache defaults target `T:\RustCache`.
-- `CARGO_HOME`, `RUSTUP_HOME`, and `SCCACHE_DIR` are shared machine-wide by default.
-- `sccache` and best-practice build defaults are on by default when the tools are available.
-- `~/rustfmt.toml` is treated as a CargoTools-managed stable fallback baseline; project-local `rustfmt.toml` files still override it normally.
-- rust-analyzer transport defaults to `lspmux` for interactive/stdin LSP sessions when `lspmux.exe` is available, and falls back to direct `rust-analyzer` for standalone commands such as `diagnostics`, `--help`, and `--version`.
-- Build outputs stay project-local by default unless `CARGO_TARGET_DIR` or shared target mode is explicitly enabled; when shared targets are used, prefer `Resolve-CargoTargetDirectory` plus `Publish-BuildArtifact` or `Copy-BuildOutputToLocal` so local runtime folders receive the successful DLL/EXE outputs deterministically.
-- Top-level build commands are queued by default so concurrent callers see backpressure instead of startup races.
+- [`docs/wrappers.md`](docs/wrappers.md) — full CLI reference for every wrapper, common flags, env vars, JSON envelope schema, cross-platform notes.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) — error codes, self-healing recovery, decision table for LLM agents, common build failures.
+- [`docs/AGENTS.md`](docs/AGENTS.md) — guidance for AI agents working in this repo.
+- [`CHANGELOG.md`](CHANGELOG.md) — version history (current: 0.9.0).
+- [`CLAUDE.md`](CLAUDE.md) — architecture, design decisions, env vars, gotchas.
+- platyPS-generated cmdlet help: `Get-Help Invoke-CargoWrapper -Full`, `Get-Help Invoke-CargoRoute -Full`, etc.
+
+## For LLM Agents
+
+CargoTools is designed for shared use by humans and AI coding agents.
+
+- Pass `--llm` (or set `CARGO_VERBOSITY=llm`) to receive a structured NDJSON envelope on stderr. Schema and an annotated transcript live in [`docs/wrappers.md`](docs/wrappers.md#json-envelope---llm).
+- Diagnostic codes (`MODULE_NOT_FOUND`, `ONEDRIVE_LOCK`, `SCCACHE_DEAD`, `RUSTUP_NOT_FOUND`, `PATH_SHADOWED`, `STALE_MUTEX`) come with a machine-readable [decision table](docs/troubleshooting.md#decision-table-for-llm-agents) mapping code → recommended action.
+- Per-agent operating instructions and rule index live under [`.claude/`](.claude/) and [`docs/AGENTS.md`](docs/AGENTS.md).
+- Standardised exit codes (0 success, 1 wrapper error, 2 module missing, 3 tool missing, 4 config error, ≥128 native passthrough) make programmatic dispatch reliable.
+
+## Architecture summary
+
+```text
+cargo.ps1 -> cargo-route.ps1 -> Invoke-CargoRoute
+                                      |
+                   +------------------+------------------+
+                   |                  |                  |
+          Invoke-CargoWrapper   Invoke-CargoWsl    Invoke-CargoDocker
+          (Windows / MSVC)      (WSL / bash -lc)   (Docker container)
+                                                        |
+                                                Invoke-CargoMacos
+                                                (Docker + zigbuild)
+```
+
+`Invoke-CargoRoute` classifies `--target` triples and dispatches. All four backend commands parse CLI-style flags in a manual `for` loop (not `param()` binding), allowing wrapper flags to mix freely with passthrough cargo arguments. Module layout, design decisions, and the list of public/private functions are in [`CLAUDE.md`](CLAUDE.md#architecture).
+
+## Contributing
+
+```powershell
+PS C:\> Import-Module CargoTools -Force
+PS C:\> Invoke-Pester -Path .\Tests\ -Output Detailed       # ~350 tests, ~2 minutes, 5 expected skips
+PS C:\> .\tools\Generate-Help.ps1                           # regenerate platyPS docs
+```
+
+Version bumps are coordinated in three places: `CargoTools.psd1` (`ModuleVersion`), `CHANGELOG.md` (new section), and `tools/Install-Wrappers.ps1` (banner). Wrapper-only changes bump the wrapper version emitted by `--version`.
+
+## License
+
+License placeholder — see `LICENSE` once published.

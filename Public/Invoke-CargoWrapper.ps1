@@ -70,7 +70,7 @@ Invoke-CargoWrapper --wrapper-help
         Write-Host "  - shared cargo/rustup homes: $sharedCacheRoot\cargo-home and $sharedCacheRoot\rustup" -ForegroundColor Gray
         Write-Host '  - project-local target/ output by default' -ForegroundColor Gray
         Write-Host '  - queued top-level cargo execution to prevent contention storms' -ForegroundColor Gray
-        Write-Host '  - sccache port: 4226' -ForegroundColor Gray
+        Write-Host '  - sccache port: 4400' -ForegroundColor Gray
         Write-Host '  - quality gate enabled (autofix + clippy + fmt, blocking)' -ForegroundColor Gray
         Write-Host '  - post-build validation enabled (nextest + doctests)' -ForegroundColor Gray
         Write-Host ''

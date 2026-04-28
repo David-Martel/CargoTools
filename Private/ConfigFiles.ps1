@@ -263,7 +263,7 @@ function Get-ManagedCargoEnvDefaults {
         SCCACHE_CACHE_SIZE     = '30G'
         SCCACHE_IDLE_TIMEOUT   = '3600'
         SCCACHE_DIRECT         = 'true'
-        SCCACHE_SERVER_PORT    = '4226'
+        SCCACHE_SERVER_PORT    = '4400'
         SCCACHE_LOG            = 'warn'
         SCCACHE_ERROR_LOG      = $sccacheErrorLog
         SCCACHE_NO_DAEMON      = '0'
@@ -385,6 +385,10 @@ function Normalize-CargoConfigUnsupportedKeys {
     if ($normalized.Contains('cargo-new') -and $normalized['cargo-new'].Contains('edition')) {
         $normalized['cargo-new'].Remove('edition')
         $changes += 'Removed unsupported cargo-new.edition key'
+    }
+    if ($normalized.Contains('alias') -and $normalized['alias'].Contains('fix')) {
+        $normalized['alias'].Remove('fix')
+        $changes += 'Removed alias.fix because it is shadowed by Cargo built-in command'
     }
 
     return [PSCustomObject]@{

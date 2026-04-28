@@ -144,9 +144,9 @@ Describe 'Initialize-CargoEnv' {
             Initialize-CargoEnv
             $env:SCCACHE_DIRECT | Should -Be 'true'
         }
-        It 'Sets SCCACHE_SERVER_PORT to 4226' {
+        It 'Sets SCCACHE_SERVER_PORT to 4400' {
             Initialize-CargoEnv
-            $env:SCCACHE_SERVER_PORT | Should -Be '4226'
+            $env:SCCACHE_SERVER_PORT | Should -Be '4400'
         }
         It 'Sets SCCACHE_IDLE_TIMEOUT' {
             Initialize-CargoEnv

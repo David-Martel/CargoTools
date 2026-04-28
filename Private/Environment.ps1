@@ -673,7 +673,11 @@ function Get-MsvcClExePath {
         $toolsRoot = Join-Path $env:VCINSTALLDIR 'Tools\\MSVC'
         if (Test-Path $toolsRoot) {
             $latestToolsDir = Get-ChildItem -LiteralPath $toolsRoot -Directory -ErrorAction SilentlyContinue |
-                Sort-Object Name -Descending |
+                Where-Object {
+                    $_.Name -notmatch '\.(broken|disabled|bak|old)$' -and
+                    (Test-Path (Join-Path $_.FullName 'bin\\Hostx64\\x64\\cl.exe'))
+                } |
+                Sort-Object @{ Expression = { [version]$_.Name }; Descending = $true } |
                 Select-Object -First 1
 
             if ($latestToolsDir) {
@@ -901,7 +905,7 @@ function Initialize-CargoEnv {
     if (-not $env:SCCACHE_STARTUP_TIMEOUT) { $env:SCCACHE_STARTUP_TIMEOUT = '30' }
     if (-not $env:SCCACHE_REQUEST_TIMEOUT) { $env:SCCACHE_REQUEST_TIMEOUT = '180' }
     if (-not $env:SCCACHE_DIRECT) { $env:SCCACHE_DIRECT = 'true' }
-    if (-not $env:SCCACHE_SERVER_PORT) { $env:SCCACHE_SERVER_PORT = '4226' }
+    if (-not $env:SCCACHE_SERVER_PORT) { $env:SCCACHE_SERVER_PORT = '4400' }
     if (-not $env:SCCACHE_LOG) { $env:SCCACHE_LOG = 'warn' }
     if (-not $env:SCCACHE_ERROR_LOG) { $env:SCCACHE_ERROR_LOG = (Join-Path $CacheRoot 'sccache\error.log') }
     if (-not $env:SCCACHE_NO_DAEMON) { $env:SCCACHE_NO_DAEMON = '0' }
