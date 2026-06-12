@@ -295,7 +295,7 @@ Describe 'Assert-AllowedValue' {
         & $script:AssertAllowedValue -Name 'mode' -Value 'native' -Allowed @('native', 'shared') | Should -Be $true
     }
     It 'Returns $false for disallowed value' {
-        & $script:AssertAllowedValue -Name 'mode' -Value 'invalid' -Allowed @('native', 'shared') 2>$null | Should -Be $false
+        & $script:AssertAllowedValue -Name 'mode' -Value 'invalid' -Allowed @('native', 'shared') -ErrorAction SilentlyContinue | Should -Be $false
     }
     It 'Returns $true for empty/null value' {
         & $script:AssertAllowedValue -Name 'mode' -Value '' -Allowed @('native', 'shared') | Should -Be $true
@@ -314,7 +314,7 @@ Describe 'Assert-NotBoth' {
         & $script:AssertNotBoth -Name 'test' -A $false -B $true | Should -Be $true
     }
     It 'Returns $false when both set' {
-        & $script:AssertNotBoth -Name 'test' -A $true -B $true 2>$null | Should -Be $false
+        & $script:AssertNotBoth -Name 'test' -A $true -B $true -ErrorAction SilentlyContinue | Should -Be $false
     }
 }
 

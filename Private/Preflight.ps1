@@ -1,4 +1,4 @@
-﻿function New-PreflightState {
+function New-PreflightState {
     return [ordered]@{
         Enabled = $false
         Mode = $null
@@ -12,6 +12,7 @@
 }
 
 function Split-PreflightArgs {
+    [CmdletBinding()]
     param([string[]]$InputArgs)
     $InputArgs = Normalize-ArgsList $InputArgs
     $state = New-PreflightState

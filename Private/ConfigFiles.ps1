@@ -543,6 +543,11 @@ function Get-DefaultCargoConfig {
             protocol = 'sparse'
         }
         'build' = $buildSection
+        'alias' = [ordered]@{
+            nt = 'nextest run'
+            ntall = 'nextest run --all-targets --all-features'
+            cov = 'llvm-cov nextest'
+        }
         'target.x86_64-pc-windows-msvc' = [ordered]@{
             linker = $linker
         }

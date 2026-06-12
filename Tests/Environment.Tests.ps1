@@ -446,6 +446,10 @@ Describe 'CARGO_INCREMENTAL + sccache conflict' {
     }
 
     It 'Resets CARGO_INCREMENTAL=1 to 0 when sccache is wrapper' {
+        if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) {
+            Set-ItResult -Skipped -Because 'sccache is not installed on this runner'
+            return
+        }
         $env:CARGO_INCREMENTAL = '1'
         $env:RUSTC_WRAPPER = 'sccache'
         Initialize-CargoEnv 3>$null

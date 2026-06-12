@@ -150,6 +150,19 @@ function Find-CargoCommandPath {
         return $script:CargoToolsCommandPathCache[$cacheKey]
     }
 
+    if ($Name -match '^[A-Za-z]:[\\/]' -or $Name -match '[\\/]') {
+        $resolvedPath = if (Test-Path -LiteralPath $Name -PathType Leaf) {
+            (Resolve-Path -LiteralPath $Name).ProviderPath
+        } else {
+            $null
+        }
+
+        if (-not $BypassCache) {
+            $script:CargoToolsCommandPathCache[$cacheKey] = $resolvedPath
+        }
+        return $resolvedPath
+    }
+
     $resolved = $null
     Initialize-CargoToolsCommandAcceleration | Out-Null
 
@@ -282,13 +295,13 @@ function Resolve-LspmuxPath {
 
     $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $HOME '.cargo' }
     $knownPaths = @(
-        (Join-Path 'T:\RustCache' 'cargo-home\bin\lspmux.exe'),
+        $(if (Test-Path -LiteralPath 'T:\') { Join-Path 'T:\RustCache' 'cargo-home\bin\lspmux.exe' }),
         (Join-Path $cargoHome 'bin\lspmux.exe'),
         (Join-Path $HOME '.cargo\bin\lspmux.exe')
-    )
+    ) | Where-Object { $_ }
 
     foreach ($path in $knownPaths) {
-        if (Test-Path $path) {
+        if (Test-Path -LiteralPath $path) {
             $fileInfo = Get-Item $path -ErrorAction SilentlyContinue
             if ($fileInfo -and $fileInfo.Length -gt 1000) {
                 return $path
@@ -520,10 +533,23 @@ function Ensure-MsvcEnv {
     }
 
     try {
-        $msvcArgs = @('-Arch', 'x64', '-HostArch', 'x64', '-NoChocoRefresh')
-        if ($vsVersionArg) {
-            $msvcArgs += @('-VSVersion', $vsVersionArg)
+        $msvcArgs = @{
+            Arch = 'x64'
+            HostArch = 'x64'
+            NoChocoRefresh = $true
         }
+        if ($vsVersionArg) {
+            $msvcCommand = $null
+            try {
+                $msvcCommand = Get-Command -Name $msvcEnv -CommandType ExternalScript -ErrorAction SilentlyContinue
+            } catch {
+                $msvcCommand = $null
+            }
+            if ($msvcCommand -and $msvcCommand.Parameters.ContainsKey('VSVersion')) {
+                $msvcArgs['VSVersion'] = $vsVersionArg
+            }
+        }
+
         & $msvcEnv @msvcArgs | Out-Null
         $env:CARGOTOOLS_MSVC_ENV_INITIALIZED = '1'
     } catch {
@@ -888,6 +914,7 @@ function Initialize-CargoEnv {
         Write-Warning 'sccache not found; disabling RUSTC_WRAPPER for this session.'
     }
     if (-not $env:CARGO_INCREMENTAL) { $env:CARGO_INCREMENTAL = '0' }
+    if (-not $env:BINSTALL_DISABLE_TELEMETRY) { $env:BINSTALL_DISABLE_TELEMETRY = '1' }
 
     # CARGO_INCREMENTAL=1 with sccache silently destroys cache hit rates (sccache#236)
     if ($env:CARGO_INCREMENTAL -eq '1' -and $env:RUSTC_WRAPPER -eq 'sccache') {

@@ -42,7 +42,8 @@ $helperFunctions = @(
     'Get-BuildVersionInfo',
     'Set-BuildVersionEnvironment',
     'Resolve-CargoTargetDirectory',
-    'Publish-BuildArtifact'
+    'Publish-BuildArtifact',
+    'Get-CargoAccelerationToolCatalog'
 )
 
 $allExports = $publicFunctions + $helperFunctions

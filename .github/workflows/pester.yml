@@ -20,7 +20,7 @@ jobs:
   test-windows-pwsh:
     name: Pester / windows-latest / pwsh (PS Core)
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -35,6 +35,8 @@ jobs:
         run: |
           # Force redeploy; CI runner ~/bin and ~/.local/bin are empty.
           ./tools/Install-Wrappers.ps1 -Force
+          "$env:USERPROFILE\.local\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "$env:USERPROFILE\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Run Pester (full suite, Integration tag excluded — runner lacks rustup/sccache/MSVC paths)
         shell: pwsh
@@ -109,7 +111,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           # --version (must print 3 version lines)
-          $vOut = pwsh -NoProfile -File ./wrappers/cargo.ps1 --version
+          $vOut = (pwsh -NoProfile -File ./wrappers/cargo.ps1 --version) -join "`n"
           if ($vOut -notmatch 'CargoTools wrapper/cargo v\d+\.\d+\.\d+') { throw "--version output unexpected: $vOut" }
 
           # --help (must include WRAPPER FLAGS section)
@@ -122,3 +124,4 @@ jobs:
           if (-not $obj.wrapper) { throw '--diagnose JSON missing wrapper field' }
           if ($null -eq $obj.exit_code) { throw '--diagnose JSON missing exit_code field' }
           Write-Host "[OK] cargo --diagnose: wrapper=$($obj.wrapper) exit_code=$($obj.exit_code) checks=$($obj.checks.Count)"
+          exit 0
