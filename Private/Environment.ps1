@@ -520,11 +520,7 @@ function Ensure-MsvcEnv {
     }
 
     try {
-        $msvcArgs = @('-Arch', 'x64', '-HostArch', 'x64', '-NoChocoRefresh')
-        if ($vsVersionArg) {
-            $msvcArgs += @('-VSVersion', $vsVersionArg)
-        }
-        & $msvcEnv @msvcArgs | Out-Null
+        & $msvcEnv -Arch x64 -HostArch x64 -NoChocoRefresh | Out-Null
         $env:CARGOTOOLS_MSVC_ENV_INITIALIZED = '1'
     } catch {
         Write-Warning "Unable to load MSVC environment via ${msvcEnv}: $_"
@@ -888,6 +884,7 @@ function Initialize-CargoEnv {
         Write-Warning 'sccache not found; disabling RUSTC_WRAPPER for this session.'
     }
     if (-not $env:CARGO_INCREMENTAL) { $env:CARGO_INCREMENTAL = '0' }
+    if (-not $env:BINSTALL_DISABLE_TELEMETRY) { $env:BINSTALL_DISABLE_TELEMETRY = '1' }
 
     # CARGO_INCREMENTAL=1 with sccache silently destroys cache hit rates (sccache#236)
     if ($env:CARGO_INCREMENTAL -eq '1' -and $env:RUSTC_WRAPPER -eq 'sccache') {
