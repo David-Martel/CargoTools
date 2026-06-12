@@ -255,6 +255,7 @@ function Classify-Target {
 }
 
 function Assert-AllowedValue {
+    [CmdletBinding()]
     param(
         [string]$Name,
         [string]$Value,
@@ -270,6 +271,7 @@ function Assert-AllowedValue {
 }
 
 function Assert-NotBoth {
+    [CmdletBinding()]
     param(
         [string]$Name,
         [bool]$A,

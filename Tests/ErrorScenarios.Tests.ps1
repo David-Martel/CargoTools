@@ -237,10 +237,7 @@ Describe 'Auto-copy disabled scenarios' {
 
 Describe 'Preflight with invalid modes' {
     It 'Split-PreflightArgs handles missing value for --preflight-mode' {
-        $result = & {
-            $ErrorActionPreference = 'SilentlyContinue'
-            & $script:SplitPreflightArgs @('build', '--preflight-mode')
-        }
+        $result = & $script:SplitPreflightArgs -InputArgs @('build', '--preflight-mode') -ErrorAction SilentlyContinue
         $result | Should -BeNullOrEmpty
     }
     It 'Defaults null mode to check in Apply-PreflightEnvDefaults' {

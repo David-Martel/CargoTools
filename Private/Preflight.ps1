@@ -12,6 +12,7 @@
 }
 
 function Split-PreflightArgs {
+    [CmdletBinding()]
     param([string[]]$InputArgs)
     $InputArgs = Normalize-ArgsList $InputArgs
     $state = New-PreflightState
