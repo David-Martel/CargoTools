@@ -20,6 +20,7 @@ CargoTools is a PowerShell module that wraps `cargo` to make Rust builds on Wind
 - **Standardised wrapper UX**: every shim supports `--help`, `--version`, `--doctor`, `--diagnose`, `--llm`, `--list-wrappers`, `--no-wrapper` with consistent exit codes 0-4.
 - **Quality gate**: optional mandatory clippy `--fix` + fmt + post-build nextest + doctests, controllable via `CARGOTOOLS_ENFORCE_QUALITY`.
 - **Global Rust config management**: `Initialize-RustDefaults` merges optimal defaults into `~/.cargo/config.toml`, `~/rustfmt.toml`, `~/.clippy.toml` without overwriting user customisations.
+- **Curated acceleration toolset**: `Install-CargoAccelerationToolset -Profile Deep` installs fast Rust/Cargo diagnostics such as `cargo-nextest`, `bacon`, `cargo-expand`, `cargo-audit`, `cargo-deny`, `cargo-llvm-cov`, `cargo-machete`, `cargo-semver-checks`, `cargo-mutants`, `samply`, `flamegraph`, `hyperfine`, and daily Rust-authored CLI helpers.
 
 ## Install
 
@@ -58,6 +59,23 @@ The five most common commands using the deployed wrappers:
 ```powershell
 PS C:\> cargo build --release                          # auto-routed Windows build
 PS C:\> cargo --route wsl test --target x86_64-unknown-linux-gnu
+
+### Install the acceleration toolset
+
+```powershell
+PS C:\> Import-Module CargoTools -Force
+PS C:\> Install-CargoAccelerationToolset -Profile Deep
+PS C:\> Test-CargoMachineDependencies -ToolProfile Deep
+PS C:\> Initialize-RustDefaults -Scope Cargo
+```
+
+`Initialize-RustDefaults -Scope Cargo` also adds convenience aliases:
+
+```powershell
+PS C:\> cargo nt     # cargo nextest run
+PS C:\> cargo ntall  # cargo nextest run --all-targets --all-features
+PS C:\> cargo cov    # cargo llvm-cov nextest
+```
 PS C:\> cargo --doctor                                 # full environment diagnostic
 PS C:\> cargo --llm build --release 2> build.ndjson    # JSON envelope on stderr
 PS C:\> rust-analyzer --memory-limit 4096              # singleton with watchdog

@@ -9,18 +9,20 @@ function Test-CargoMachineDependencies {
     [CmdletBinding()]
     param(
         [switch]$Quiet,
-        [switch]$Detailed
+        [switch]$Detailed,
+
+        [ValidateSet('Core', 'Deep', 'All')]
+        [string]$ToolProfile = 'Core'
     )
 
     $checks = @(
         @{ Name = 'rustup'; Command = 'rustup'; Mandatory = $true; Install = 'https://rustup.rs/' },
         @{ Name = 'cargo'; Command = 'cargo'; Mandatory = $true; Install = 'rustup component add rustfmt clippy' },
-        @{ Name = 'rustc'; Command = 'rustc'; Mandatory = $true; Install = 'rustup update stable' },
-        @{ Name = 'sccache'; Command = 'sccache'; Mandatory = $true; Install = 'cargo install sccache --locked' },
-        @{ Name = 'cargo-nextest'; Command = 'cargo-nextest'; Mandatory = $false; Install = 'cargo install cargo-nextest --locked' },
-        @{ Name = 'cargo-deny'; Command = 'cargo-deny'; Mandatory = $false; Install = 'cargo install cargo-deny --locked' },
-        @{ Name = 'ninja'; Command = 'ninja'; Mandatory = $false; Install = 'choco install ninja' }
+        @{ Name = 'rustc'; Command = 'rustc'; Mandatory = $true; Install = 'rustup update stable' }
     )
+    $checks += @(Get-CargoAccelerationToolCatalog -Profile $ToolProfile | ForEach-Object {
+        @{ Name = $_.Name; Command = $_.Command; Mandatory = [bool]$_.Mandatory; Install = $_.Install }
+    })
 
     $results = @()
     $missingMandatory = @()
@@ -47,6 +49,7 @@ function Test-CargoMachineDependencies {
     }
 
     if (Test-IsWindows) {
+        Ensure-MsvcEnv
         $msvcCl = Get-MsvcClExePath
         $msvcEntry = [pscustomobject]@{
             Name = 'msvc-cl'

@@ -83,13 +83,16 @@ FunctionsToExport = 'Invoke-CargoRoute', 'Invoke-CargoWrapper', 'Invoke-CargoWsl
                'Format-CargoOutput', 'Format-CargoError', 'ConvertTo-LlmContext',
                'Get-RustProjectContext', 'Get-CargoContextSnapshot',
                # Build environment diagnostics
-               'Test-BuildEnvironment', 'Get-CargoQueueStatus',
+               'Test-BuildEnvironment', 'Test-CargoMachineDependencies', 'Get-CargoQueueStatus',
                # Build versioning and artifact publication
                'Get-BuildVersionInfo', 'Set-BuildVersionEnvironment',
                'Resolve-CargoTargetDirectory', 'Publish-BuildArtifact',
                # Config management
                'Initialize-RustDefaults',
-               'Initialize-ProjectCargoConfig'
+               'Initialize-ProjectCargoConfig',
+               # Acceleration toolset management
+               'Install-CargoAccelerationToolset',
+               'Get-CargoAccelerationToolCatalog'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()
@@ -137,10 +140,12 @@ FileList = @(
     'Tests\\ConfigFiles.Tests.ps1',
     'Tests\\LlmOutput.Tests.ps1',
     'Private\\ConfigFiles.ps1',
+    'Private\\ToolCatalog.ps1',
     'Private\\MachineConfig.ps1',
     'Config\\machines-cargo.json',
     'Public\\Initialize-RustDefaults.ps1',
     'Public\\Initialize-ProjectCargoConfig.ps1',
+    'Public\\Install-CargoAccelerationToolset.ps1',
     'README.md',
     'CHANGELOG.md',
     'docs\\Invoke-CargoDocker.md',
@@ -164,7 +169,6 @@ FileList = @(
     'Tests\\Wrappers.Tests.ps1',
     'Public\\Test-BuildEnvironment.ps1',
     'Public\\Get-CargoQueueStatus.ps1',
-    'en-US\\about_CargoTools.help.txt',
     'en-US\\CargoTools-help.xml'
 )
 
