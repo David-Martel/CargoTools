@@ -393,7 +393,11 @@ Describe 'Get-DefaultCargoConfig' {
     }
     It 'Has sccache as rustc-wrapper' {
         $config = & $script:GetDefaultCargo
-        $config['build']['rustc-wrapper'] | Should -Be 'sccache'
+        if (Get-Command sccache -ErrorAction SilentlyContinue) {
+            $config['build']['rustc-wrapper'] | Should -Be 'sccache'
+        } else {
+            $config['build'].Contains('rustc-wrapper') | Should -BeFalse
+        }
     }
     It 'Has lld-link as linker' {
         $config = & $script:GetDefaultCargo
