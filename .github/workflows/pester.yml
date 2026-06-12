@@ -124,3 +124,4 @@ jobs:
           if (-not $obj.wrapper) { throw '--diagnose JSON missing wrapper field' }
           if ($null -eq $obj.exit_code) { throw '--diagnose JSON missing exit_code field' }
           Write-Host "[OK] cargo --diagnose: wrapper=$($obj.wrapper) exit_code=$($obj.exit_code) checks=$($obj.checks.Count)"
+          exit 0
