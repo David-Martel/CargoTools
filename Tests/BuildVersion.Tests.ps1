@@ -33,7 +33,7 @@ AfterAll {
 
 Describe 'Get-BuildVersionInfo' {
     It 'Returns semantic version, release tag, and assembly metadata for an existing repo without mutating signing state' {
-        $repoRoot = 'C:\codedev\PC_AI'
+        $repoRoot = Split-Path -Parent $PSScriptRoot
         Test-Path $repoRoot | Should -BeTrue
 
         $info = Get-BuildVersionInfo -RepoRoot $repoRoot -DefaultVersion '0.1.0'

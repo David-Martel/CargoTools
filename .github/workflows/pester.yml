@@ -35,6 +35,8 @@ jobs:
         run: |
           # Force redeploy; CI runner ~/bin and ~/.local/bin are empty.
           ./tools/Install-Wrappers.ps1 -Force
+          "$env:USERPROFILE\.local\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "$env:USERPROFILE\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: Run Pester (full suite, Integration tag excluded — runner lacks rustup/sccache/MSVC paths)
         shell: pwsh
