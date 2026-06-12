@@ -229,9 +229,9 @@ Describe 'Auto-copy disabled scenarios' {
             Remove-Item Env:CARGO_AUTO_COPY -ErrorAction SilentlyContinue
         }
     }
-    It 'Defaults to enabled when unset' {
+    It 'Defaults to disabled for local project targets when unset' {
         Remove-Item Env:CARGO_AUTO_COPY -ErrorAction SilentlyContinue
-        & $script:TestAutoCopyEnabled | Should -Be $true
+        & $script:TestAutoCopyEnabled | Should -Be $false
     }
 }
 

@@ -168,6 +168,7 @@ FileList = @(
     'wrappers\\rust-analyzer-wrapper.ps1',
     'Tests\\Wrappers.Tests.ps1',
     'Public\\Test-BuildEnvironment.ps1',
+    'Public\\Test-CargoMachineDependencies.ps1',
     'Public\\Get-CargoQueueStatus.ps1',
     'en-US\\CargoTools-help.xml'
 )
