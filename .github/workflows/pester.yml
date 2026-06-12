@@ -111,7 +111,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           # --version (must print 3 version lines)
-          $vOut = pwsh -NoProfile -File ./wrappers/cargo.ps1 --version
+          $vOut = (pwsh -NoProfile -File ./wrappers/cargo.ps1 --version) -join "`n"
           if ($vOut -notmatch 'CargoTools wrapper/cargo v\d+\.\d+\.\d+') { throw "--version output unexpected: $vOut" }
 
           # --help (must include WRAPPER FLAGS section)
