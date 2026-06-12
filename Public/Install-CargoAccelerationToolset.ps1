@@ -52,7 +52,7 @@ rustup, or cargo install as appropriate. Existing commands are skipped unless
                         $exitCode = 127
                         break
                     }
-                    & $cargoBinstall --no-confirm --disable-telemetry --locked $tool.Package
+                    & $cargoBinstall --no-confirm --locked $tool.Package
                     $exitCode = $LASTEXITCODE
                     $status = if ($exitCode -eq 0) { 'installed' } else { 'failed' }
                 }

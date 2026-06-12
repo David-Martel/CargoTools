@@ -187,10 +187,10 @@ function Test-BuildEnvironment {
     }
 
     $managedEnv = Get-ManagedCargoEnvDefaults
-    $cargoConfigPaths = @(
+    $cargoConfigPaths = @(@(
         (Join-Path $HOME '.cargo\config.toml'),
         (Join-Path $cacheRoot 'cargo-home\config.toml')
-    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+    ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique)
 
     $envTypeConflicts = @()
     foreach ($envKey in $managedEnv.Keys) {
