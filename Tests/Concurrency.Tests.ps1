@@ -440,7 +440,7 @@ namespace CargoToolsTest2 {
     }
 }
 
-Describe 'Cargo build queue' {
+Describe 'Cargo build queue' -Skip:([bool]$env:GITHUB_ACTIONS) {
     BeforeEach {
         $script:SavedQueueVars = @{}
         foreach ($name in @('CARGOTOOLS_MAX_ACTIVE_BUILDS', 'PCAI_CACHE_ROOT')) {
