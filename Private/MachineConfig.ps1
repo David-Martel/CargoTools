@@ -346,9 +346,12 @@ function Get-MsvcInfo {
         try {
             $json = & $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json 2>$null
             if ($json) {
-                $instances = @($json | ConvertFrom-Json | Where-Object { $_.isComplete -and $_.isLaunchable })
+                $jsonText = if ($json -is [array]) { $json -join [Environment]::NewLine } else { $json }
+                $instances = @(($jsonText | ConvertFrom-Json) | Where-Object { $_.isComplete -and $_.isLaunchable })
             }
-        } catch {}
+        } catch {
+            Write-Verbose "Visual Studio discovery through vswhere failed: $_"
+        }
     }
 
     $vsPath = $null
