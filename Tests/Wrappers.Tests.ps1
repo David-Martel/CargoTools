@@ -22,6 +22,8 @@ $__WrapperTestCases = @(
     @{ WName = 'rust-analyzer-wrapper'; WPath = (Join-Path $__wrappers 'rust-analyzer-wrapper.ps1') }
 )
 
+$__CargoStyleHelpWrapperTestCases = @($__WrapperTestCases | Where-Object { $_.WName -ne 'maturin' })
+
 $__WrapperFileTestCases = @(
     @{ FileName = 'cargo.ps1' },
     @{ FileName = 'cargo-route.ps1' },
@@ -567,9 +569,19 @@ Describe 'Per-wrapper --help exits 0' {
 }
 
 Describe 'Per-wrapper --help WRAPPER FLAGS' {
-    It '<WName> --help contains WRAPPER FLAGS' -TestCases $__WrapperTestCases {
+    It '<WName> --help contains WRAPPER FLAGS' -TestCases $__CargoStyleHelpWrapperTestCases {
         param($WName, $WPath)
         pwsh -NoProfile -NonInteractive -File $WPath --help 2>&1 | Out-String | Should -Match 'WRAPPER FLAGS'
+    }
+}
+
+Describe 'maturin native help passthrough' {
+    BeforeAll { $script:MaturinPs1 = Join-Path $script:WrappersDir 'maturin.ps1' }
+    It 'maturin --help shows native maturin help' {
+        pwsh -NoProfile -NonInteractive -File $script:MaturinPs1 --help 2>&1 | Out-String | Should -Match 'Usage: maturin'
+    }
+    It 'maturin --wrapper-help shows CargoTools help' {
+        pwsh -NoProfile -NonInteractive -File $script:MaturinPs1 --wrapper-help 2>&1 | Out-String | Should -Match 'WRAPPER FLAGS'
     }
 }
 
@@ -578,6 +590,27 @@ Describe 'Per-wrapper --list-wrappers exits 0' {
         param($WName, $WPath)
         pwsh -NoProfile -NonInteractive -File $WPath --list-wrappers 2>&1 | Out-Null
         $LASTEXITCODE | Should -Be 0
+    }
+}
+
+Describe 'Per-wrapper native flag pass-through binding' {
+    It '<WName> accepts -p after wrapper args without PowerShell common-parameter binding' -TestCases $__WrapperTestCases {
+        param($WName, $WPath)
+        pwsh -NoProfile -NonInteractive -File $WPath --list-wrappers -p pyo3 2>&1 | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+
+    It '<FileName> CLI template is not an advanced script' -TestCases $__WrapperFileTestCases {
+        param($FileName)
+        if ($FileName -eq '_WrapperHelpers.psm1') {
+            Set-ItResult -Skipped -Because 'helper module intentionally exports advanced functions'
+            return
+        }
+        $content = Get-Content -Path (Join-Path $script:WrappersDir $FileName) -Raw
+        $content | Should -Not -Match '\[CmdletBinding\(\)\]'
+        $content | Should -Not -Match 'ValueFromRemainingArguments'
+        $content | Should -Not -Match '@\(\[string\[\]\]\$ctx\.PassThrough\)'
+        $content | Should -Match '\$passThroughArgs = \[string\[\]\]@\(\$ctx\.PassThrough\)'
     }
 }
 
