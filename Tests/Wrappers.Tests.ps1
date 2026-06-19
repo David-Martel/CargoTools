@@ -584,8 +584,14 @@ Describe 'Per-wrapper --help WRAPPER FLAGS' {
 }
 
 Describe 'maturin native help passthrough' {
-    BeforeAll { $script:MaturinPs1 = Join-Path $script:WrappersDir 'maturin.ps1' }
+    BeforeAll {
+        $script:MaturinPs1 = Join-Path $script:WrappersDir 'maturin.ps1'
+        $script:__MaturinNativeAvailable = [bool](Get-Command maturin.exe -ErrorAction SilentlyContinue)
+    }
     It 'maturin --help shows native maturin help' {
+        if (-not $script:__MaturinNativeAvailable) {
+            Set-ItResult -Skipped -Because 'maturin.exe native binary is not installed on this machine'
+        }
         pwsh -NoProfile -NonInteractive -File $script:MaturinPs1 --help 2>&1 | Out-String | Should -Match 'Usage: maturin'
     }
     It 'maturin --wrapper-help shows CargoTools help' {
