@@ -512,7 +512,12 @@ function Write-ConfigFile {
 
     if ($PSCmdlet.ShouldProcess($Path, 'Write config file')) {
         $leaf = Split-Path -Path $Path -Leaf
-        $writeDir = if ($dir) { $dir } else { (Get-Location).Path }
+        # Resolve to absolute so the temp file is always on the same volume as $Path,
+        # preventing Move-Item from failing with a cross-volume error when $Path has no
+        # directory component (Split-Path returns "" → falsy → wrong fallback).
+        $absPath  = [System.IO.Path]::GetFullPath($Path)
+        $writeDir = [System.IO.Path]::GetDirectoryName($absPath)
+        if (-not $writeDir) { $writeDir = (Get-Location).Path }
         $tmpPath = Join-Path $writeDir ".$leaf.cargotools.tmp"
         $encoding = [System.Text.UTF8Encoding]::new($false)
         [System.IO.File]::WriteAllText($tmpPath, $Content, $encoding)

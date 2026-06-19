@@ -553,16 +553,24 @@ Describe 'Argument pass-through fidelity' {
 # Per-wrapper subprocess tests
 # ---------------------------------------------------------------------------
 Describe 'Per-wrapper --version exits 0' {
+    BeforeAll { $script:__MaturinAvailable = [bool](Get-Command maturin.exe -ErrorAction SilentlyContinue) }
     It '<WName> --version exits 0' -TestCases $__WrapperTestCases {
         param($WName, $WPath)
+        if ($WName -eq 'maturin' -and -not $script:__MaturinAvailable) {
+            Set-ItResult -Skipped -Because 'maturin.exe is not installed on this machine'
+        }
         pwsh -NoProfile -NonInteractive -File $WPath --version 2>&1 | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 }
 
 Describe 'Per-wrapper --help exits 0' {
+    BeforeAll { $script:__MaturinAvailable = [bool](Get-Command maturin.exe -ErrorAction SilentlyContinue) }
     It '<WName> --help exits 0' -TestCases $__WrapperTestCases {
         param($WName, $WPath)
+        if ($WName -eq 'maturin' -and -not $script:__MaturinAvailable) {
+            Set-ItResult -Skipped -Because 'maturin.exe is not installed on this machine'
+        }
         pwsh -NoProfile -NonInteractive -File $WPath --help 2>&1 | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
