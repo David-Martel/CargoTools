@@ -1,43 +1,53 @@
 #Requires -Version 5.1
-# maturin.ps1 — CargoTools v0.9.0 maturin wrapper
+# maturin.ps1 - CargoTools v0.9.0 maturin wrapper
 # Preserves venv detection. Adds wrapper flags + sccache integration.
-[CmdletBinding()]
-param(
-    [Parameter(ValueFromRemainingArguments = $true, Position = 0)]
-    [string[]]$ArgumentList
-)
 $ErrorActionPreference = 'Stop'
+[string[]]$ArgumentList = @($args)
 
 Import-Module (Join-Path $PSScriptRoot '_WrapperHelpers.psm1') -Force
 
 $ctx = Get-WrapperContext -InvocationArgs $ArgumentList -WrapperName 'maturin'
+$passThroughArgs = [string[]]@($ctx.PassThrough)
 
-if ($ctx.HelpRequested)    { Show-WrapperHelp -WrapperName 'maturin' -RemainingArgs $ctx.PassThrough; exit 0 }
-if ($ctx.VersionRequested) { Show-WrapperVersion -WrapperName 'maturin'; exit 0 }
+function Resolve-MaturinExe {
+    # Locate maturin.exe alongside this wrapper script.
+    $scriptDir  = $PSScriptRoot
+    $candidate = Join-Path $scriptDir 'maturin.exe'
+    if (Test-Path $candidate) { return $candidate }
+
+    # Fallback to maturin.exe on PATH. Use the executable name to avoid
+    # recursively resolving this PowerShell wrapper for native help/version.
+    $maturinCmd = Get-Command maturin.exe -ErrorAction SilentlyContinue
+    if ($maturinCmd) { return $maturinCmd.Source }
+
+    Write-LlmEvent -Phase diagnostic -Level error -Code MATURIN_NOT_FOUND `
+        -Detail 'maturin.exe not found alongside wrapper or on PATH' `
+        -Recovery 'Install maturin: pip install maturin' -EmitLlm:$ctx.LlmMode
+    Write-Host '[ERROR] maturin.exe not found.' -ForegroundColor Red
+    exit 3
+}
+
+$wrapperHelpRequested = $ArgumentList -contains '--wrapper-help'
+if ($wrapperHelpRequested) { Show-WrapperHelp -WrapperName 'maturin' -RemainingArgs $passThroughArgs; exit 0 }
 if ($ctx.DoctorRequested)  { exit (Invoke-WrapperDoctor -WrapperName 'maturin' -AsJson:$ctx.DiagnoseRequested) }
 if ($ctx.ListRequested)    { Show-WrapperList; exit 0 }
 
-# Locate maturin.exe alongside this wrapper script
-$scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
-$maturinExe = Join-Path $scriptDir 'maturin.exe'
-if (-not (Test-Path $maturinExe)) {
-    # Fallback: maturin on PATH
-    $maturinCmd = Get-Command maturin.exe -ErrorAction SilentlyContinue
-    if ($maturinCmd) {
-        $maturinExe = $maturinCmd.Source
-    } else {
-        Write-LlmEvent -Phase diagnostic -Level error -Code RUSTUP_NOT_FOUND `
-            -Detail 'maturin.exe not found alongside wrapper or on PATH' `
-            -Recovery 'Install maturin: pip install maturin' -EmitLlm:$ctx.LlmMode
-        Write-Host '[ERROR] maturin.exe not found.' -ForegroundColor Red
-        exit 3
+$maturinExe = Resolve-MaturinExe
+
+if ($ctx.HelpRequested -or $ctx.VersionRequested) {
+    $nativeArgs = [System.Collections.Generic.List[string]]::new()
+    foreach ($a in $ArgumentList) {
+        if ($a -eq '--llm' -or $a -eq '--json-output') { continue }
+        $nativeArgs.Add($a)
     }
+    & $maturinExe @($nativeArgs.ToArray())
+    exit $LASTEXITCODE
 }
 
 # Parse --no-sccache from the pass-through args
 $noSccache  = $false
 $finalArgs  = [System.Collections.Generic.List[string]]::new()
-foreach ($a in $ctx.PassThrough) {
+foreach ($a in $passThroughArgs) {
     if ($a -eq '--no-sccache') { $noSccache = $true } else { $finalArgs.Add($a) }
 }
 
@@ -63,9 +73,13 @@ if ($noSccache) {
     if (Test-Path Env:RUSTC_WRAPPER) { Remove-Item Env:RUSTC_WRAPPER }
 } else {
     if (-not (Import-CargoToolsResilient -EmitLlm:$ctx.LlmMode)) {
-        # Non-fatal for maturin — proceed without sccache
+        # Non-fatal for maturin; proceed without sccache.
     } else {
-        try { Start-SccacheServer | Out-Null } catch {}
+        try {
+            Start-SccacheServer | Out-Null
+        } catch {
+            Write-Verbose "Unable to start sccache for maturin: $($_.Exception.Message)"
+        }
     }
     if (-not $env:RUSTC_WRAPPER) {
         $sccacheCmd = Get-Command sccache -ErrorAction SilentlyContinue
@@ -73,11 +87,12 @@ if ($noSccache) {
     }
 }
 
-Write-LlmEvent -Phase start -Wrapper maturin -Args $finalArgs.ToArray() -EmitLlm:$ctx.LlmMode
+$finalMaturinArgs = [string[]]$finalArgs.ToArray()
+Write-LlmEvent -Phase start -Wrapper maturin -Args $finalMaturinArgs -EmitLlm:$ctx.LlmMode
 $start = Get-Date
 
 try {
-    & $maturinExe @($finalArgs.ToArray())
+    & $maturinExe @finalMaturinArgs
     $code = $LASTEXITCODE
 } finally {
     if ($null -ne $savedRustcWrapper) {

@@ -484,6 +484,18 @@ function Write-ConfigFile {
         }
     }
 
+    if (Test-Path $Path) {
+        try {
+            $existingContent = [System.IO.File]::ReadAllText($Path)
+            if ($existingContent -eq $Content) {
+                Write-Verbose "Config file '$Path' is already up to date."
+                return
+            }
+        } catch {
+            Write-Verbose "Could not compare existing config file '$Path': $($_.Exception.Message)"
+        }
+    }
+
     if ((Test-Path $Path) -and -not $NoBackup) {
         $bakPath = "$Path.bak"
         if ($PSCmdlet.ShouldProcess($bakPath, 'Create backup')) {
@@ -499,7 +511,32 @@ function Write-ConfigFile {
     }
 
     if ($PSCmdlet.ShouldProcess($Path, 'Write config file')) {
-        Set-Content -Path $Path -Value $Content -Encoding UTF8 -NoNewline
+        $leaf = Split-Path -Path $Path -Leaf
+        # Resolve to absolute so the temp file is always on the same volume as $Path,
+        # preventing Move-Item from failing with a cross-volume error when $Path has no
+        # directory component (Split-Path returns "" → falsy → wrong fallback).
+        $absPath  = [System.IO.Path]::GetFullPath($Path)
+        $writeDir = [System.IO.Path]::GetDirectoryName($absPath)
+        if (-not $writeDir) { $writeDir = (Get-Location).Path }
+        $tmpPath = Join-Path $writeDir ".$leaf.cargotools.tmp"
+        $encoding = [System.Text.UTF8Encoding]::new($false)
+        [System.IO.File]::WriteAllText($tmpPath, $Content, $encoding)
+        $moved = $false
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+                Move-Item -LiteralPath $tmpPath -Destination $Path -Force -ErrorAction Stop
+                $moved = $true
+                break
+            } catch {
+                if ($attempt -ge 3) {
+                    throw
+                }
+                Start-Sleep -Milliseconds (50 * $attempt)
+            }
+        }
+        if (-not $moved -and (Test-Path $tmpPath)) {
+            Remove-Item -LiteralPath $tmpPath -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
