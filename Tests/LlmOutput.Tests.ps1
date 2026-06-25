@@ -73,6 +73,11 @@ Describe 'Get-MessageFormatArgs' {
         $result = & $script:GetMessageFormatArgs -PrimaryCommand 'build' -ArgsList @('build', '--message-format', 'short')
         $result | Should -Not -Contain '--message-format=json'
     }
+
+    It 'Injects before cargo -- separator for driver args' {
+        $result = & $script:GetMessageFormatArgs -PrimaryCommand 'clippy' -ArgsList @('clippy', '--all-targets', '--', '-D', 'warnings')
+        $result | Should -Be @('clippy', '--all-targets', '--message-format=json', '--', '-D', 'warnings')
+    }
 }
 
 Describe 'ConvertFrom-CargoJson' {
