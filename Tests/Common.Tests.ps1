@@ -26,6 +26,9 @@ BeforeAll {
     $script:EnsureCargoDriverArgSeparator = & $module { ${function:Ensure-CargoDriverArgSeparator} }
     $script:GetTargetFromArgs = & $module { ${function:Get-TargetFromArgs} }
     $script:EnsureMessageFormatShort = & $module { ${function:Ensure-MessageFormatShort} }
+    $script:TestSccacheInfrastructureFailureText = & $module { ${function:Test-SccacheInfrastructureFailureText} }
+    $script:TestSccacheInfrastructureFailureFromLog = & $module { ${function:Test-SccacheInfrastructureFailureFromLog} }
+    $script:AddNoSccacheCargoConfigArgs = & $module { ${function:Add-NoSccacheCargoConfigArgs} }
 }
 
 Describe 'Test-Truthy' {
@@ -217,6 +220,33 @@ Describe 'Split-CargoArgsAtDoubleDash' {
         $result.HasSeparator | Should -BeTrue
         $result.CargoArgs | Should -Be @('clippy')
         $result.ToolArgs | Should -HaveCount 0
+    }
+}
+
+Describe 'Sccache infrastructure failure helpers' {
+    It 'Detects sccache transport failures without matching Rust diagnostics' {
+        & $script:TestSccacheInfrastructureFailureText 'sccache: error: failed to execute compile' | Should -BeTrue
+        & $script:TestSccacheInfrastructureFailureText 'Failed to read response header' | Should -BeTrue
+        & $script:TestSccacheInfrastructureFailureText 'error[E0308]: mismatched types' | Should -BeFalse
+    }
+
+    It 'Honors the current build window when reading sccache logs' {
+        $path = Join-Path $TestDrive 'sccache-error.log'
+        $now = (Get-Date).ToUniversalTime()
+        $old = $now.AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:ssZ')
+        $fresh = $now.ToString('yyyy-MM-ddTHH:mm:ssZ')
+        Set-Content -LiteralPath $path -Value @(
+            "[$old ERROR sccache::server] sccache: error: timed out",
+            "[$fresh ERROR sccache::server] Failed to read response header"
+        )
+
+        & $script:TestSccacheInfrastructureFailureFromLog -LogPath $path -SinceUtc $now.AddMinutes(-1) | Should -BeTrue
+        & $script:TestSccacheInfrastructureFailureFromLog -LogPath $path -SinceUtc $now.AddMinutes(1) | Should -BeFalse
+    }
+
+    It 'Prepends a cargo config override that disables rustc-wrapper for retry' {
+        $result = & $script:AddNoSccacheCargoConfigArgs -ArgsList @('nextest', 'run', '--workspace')
+        $result | Should -Be @('--config', 'build.rustc-wrapper=""', 'nextest', 'run', '--workspace')
     }
 }
 

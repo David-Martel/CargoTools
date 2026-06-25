@@ -323,6 +323,103 @@ function Split-CargoArgsAtDoubleDash {
     }
 }
 
+function Test-SccacheInfrastructureFailureText {
+    <#
+    .SYNOPSIS
+    Detects sccache infrastructure failures, not Rust compiler diagnostics.
+    #>
+    param(
+        [AllowNull()][string]$Text
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
+
+    $patterns = @(
+        'sccache:\s*error:\s*failed to execute compile',
+        'sccache:\s*error:\s*timed out',
+        'Failed to send data to or receive data from server',
+        'Failed to read response header',
+        'forcibly closed by the remote host',
+        'failed to persist temporary file',
+        'Only one usage of each socket address',
+        'An attempt was made to access a socket in a way forbidden',
+        'Failed to bind socket'
+    )
+
+    foreach ($pattern in $patterns) {
+        if ($Text -match $pattern) { return $true }
+    }
+    return $false
+}
+
+function Test-SccacheInfrastructureFailureFromLog {
+    <#
+    .SYNOPSIS
+    Checks whether the current build window logged an sccache infrastructure failure.
+    #>
+    [CmdletBinding()]
+    param(
+        [datetime]$SinceUtc = (Get-Date).ToUniversalTime().AddMinutes(-5),
+        [string]$LogPath = $env:SCCACHE_ERROR_LOG,
+        [int]$Tail = 400
+    )
+
+    if (-not $LogPath -or -not (Test-Path -LiteralPath $LogPath)) {
+        return $false
+    }
+
+    $since = if ($SinceUtc.Kind -eq [DateTimeKind]::Utc) {
+        $SinceUtc
+    } else {
+        $SinceUtc.ToUniversalTime()
+    }
+    $windowStart = $since.AddSeconds(-5)
+    $logItem = Get-Item -LiteralPath $LogPath -ErrorAction SilentlyContinue
+    $untimestampedMatch = $false
+
+    foreach ($line in @(Get-Content -LiteralPath $LogPath -Tail $Tail -ErrorAction SilentlyContinue)) {
+        if (-not (Test-SccacheInfrastructureFailureText -Text $line)) { continue }
+
+        $match = [regex]::Match($line, '^\[(?<ts>\d{4}-\d{2}-\d{2}T[^\s\]]+)')
+        if ($match.Success) {
+            $parsed = [datetime]::MinValue
+            if ([datetime]::TryParse(
+                    $match.Groups['ts'].Value,
+                    [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::AdjustToUniversal,
+                    [ref]$parsed
+                ) -and $parsed.ToUniversalTime() -ge $windowStart) {
+                return $true
+            }
+        } else {
+            $untimestampedMatch = $true
+        }
+    }
+
+    if ($untimestampedMatch -and $logItem -and $logItem.LastWriteTimeUtc -ge $windowStart) {
+        return $true
+    }
+    return $false
+}
+
+function Add-NoSccacheCargoConfigArgs {
+    <#
+    .SYNOPSIS
+    Prepends a cargo config override that clears build.rustc-wrapper.
+    #>
+    param(
+        [AllowNull()][string[]]$ArgsList
+    )
+
+    $args = New-Object System.Collections.Generic.List[string]
+    $args.Add('--config')
+    $args.Add('build.rustc-wrapper=""')
+    foreach ($arg in @($ArgsList)) {
+        if ($null -ne $arg) { $args.Add($arg) }
+    }
+    return $args.ToArray()
+}
+
 function Ensure-RunArgSeparator {
     param([string[]]$ArgsList)
 
