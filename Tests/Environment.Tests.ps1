@@ -20,6 +20,8 @@ BeforeAll {
     $script:GetOptimalBuildJobs = & $module { ${function:Get-OptimalBuildJobs} }
     $script:GetSanitizedPath = & $module { ${function:Get-SanitizedPath} }
     $script:GetMsvcClExePath = & $module { ${function:Get-MsvcClExePath} }
+    $script:SetCMakeMsvcCompilerDefaults = & $module { ${function:Set-CMakeMsvcCompilerDefaults} }
+    $script:ResolveNasmPath = & $module { ${function:Resolve-NasmPath} }
     $script:ResolveFreeSccachePort = & $module { ${function:Resolve-FreeSccachePort} }
 
     # Save env state to restore after tests
@@ -32,7 +34,10 @@ BeforeAll {
         'CARGO_BUILD_JOBS', 'RA_LRU_CAPACITY', 'CHALK_SOLVER_MAX_SIZE', 'RA_PROC_MACRO_WORKERS',
         'CARGO_USE_LLD', 'CARGO_USE_FASTLINK', 'CARGO_LLD_PATH',
         'CARGO_USE_NEXTEST', 'CMAKE_GENERATOR', 'MAKEFLAGS', 'CMAKE_BUILD_PARALLEL_LEVEL',
-        'CC', 'CXX', 'PATH', 'CARGO_PREFLIGHT_MODE'
+        'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER', 'CMAKE_ASM_COMPILER',
+        'CMAKE_ASM_NASM_COMPILER', 'ASM_NASM',
+        'CARGOTOOLS_PRESERVE_CMAKE_COMPILER',
+        'CC', 'CXX', 'PROCESSOR_ARCHITECTURE', 'PATH', 'CARGO_PREFLIGHT_MODE'
     )
     foreach ($name in $envVarsToSave) {
         if (Test-Path "Env:$name") {
@@ -49,7 +54,10 @@ AfterAll {
     # Remove env vars that were added but not originally present
     $envVarsToClean = @(
         'CARGO_USE_NEXTEST', 'CMAKE_GENERATOR', 'MAKEFLAGS', 'CMAKE_BUILD_PARALLEL_LEVEL',
-        'CARGO_PREFLIGHT_MODE'
+        'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER', 'CMAKE_ASM_COMPILER',
+        'CMAKE_ASM_NASM_COMPILER', 'ASM_NASM',
+        'CARGOTOOLS_PRESERVE_CMAKE_COMPILER',
+        'PROCESSOR_ARCHITECTURE', 'CARGO_PREFLIGHT_MODE'
     )
     foreach ($name in $envVarsToClean) {
         if (-not $script:SavedEnv.ContainsKey($name)) {
@@ -69,7 +77,10 @@ Describe 'Initialize-CargoEnv' {
             'CARGO_BUILD_JOBS', 'CARGO_USE_LLD', 'CARGO_USE_FASTLINK', 'CARGO_LLD_PATH',
             'RA_LRU_CAPACITY', 'CHALK_SOLVER_MAX_SIZE', 'RA_PROC_MACRO_WORKERS',
             'CARGO_USE_NEXTEST', 'CMAKE_GENERATOR', 'MAKEFLAGS', 'CMAKE_BUILD_PARALLEL_LEVEL',
-            'CARGO_PREFLIGHT_MODE'
+            'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER', 'CMAKE_ASM_COMPILER',
+            'CMAKE_ASM_NASM_COMPILER', 'ASM_NASM',
+            'CARGOTOOLS_PRESERVE_CMAKE_COMPILER',
+            'PROCESSOR_ARCHITECTURE', 'CARGO_PREFLIGHT_MODE'
         )
         foreach ($name in $clearVars) {
             Remove-Item "Env:$name" -ErrorAction SilentlyContinue
@@ -153,6 +164,17 @@ Describe 'Initialize-CargoEnv' {
         It 'Sets SCCACHE_IDLE_TIMEOUT' {
             Initialize-CargoEnv
             $env:SCCACHE_IDLE_TIMEOUT | Should -Not -BeNullOrEmpty
+        }
+        It 'Sets PROCESSOR_ARCHITECTURE on Windows when missing' {
+            if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+                    [System.Runtime.InteropServices.OSPlatform]::Windows
+                )) {
+                Set-ItResult -Skipped -Because 'Windows-only default'
+                return
+            }
+
+            Initialize-CargoEnv
+            $env:PROCESSOR_ARCHITECTURE | Should -Be 'AMD64'
         }
     }
 
@@ -328,6 +350,88 @@ Describe 'Get-MsvcClExePath' {
     }
 }
 
+Describe 'Set-CMakeMsvcCompilerDefaults' {
+    BeforeEach {
+        foreach ($name in @('CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER', 'CMAKE_ASM_COMPILER', 'CARGOTOOLS_PRESERVE_CMAKE_COMPILER')) {
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Pins unset CMake compiler vars to the validated MSVC compiler' {
+        $compiler = [System.IO.Path]::GetTempFileName()
+        try {
+            & $script:SetCMakeMsvcCompilerDefaults -CompilerPath $compiler
+            $env:CMAKE_C_COMPILER | Should -Be $compiler
+            $env:CMAKE_CXX_COMPILER | Should -Be $compiler
+            $env:CMAKE_ASM_COMPILER | Should -Be $compiler
+        } finally {
+            Remove-Item $compiler -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Replaces stale Visual Studio preview compiler vars' {
+        $compiler = [System.IO.Path]::GetTempFileName()
+        try {
+            $env:CMAKE_C_COMPILER = 'C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Tools\MSVC\14.51.0\bin\Hostx64\x64\cl.exe'
+            $env:CMAKE_CXX_COMPILER = $env:CMAKE_C_COMPILER
+            $env:CMAKE_ASM_COMPILER = $env:CMAKE_C_COMPILER
+            & $script:SetCMakeMsvcCompilerDefaults -CompilerPath $compiler
+            $env:CMAKE_C_COMPILER | Should -Be $compiler
+            $env:CMAKE_CXX_COMPILER | Should -Be $compiler
+            $env:CMAKE_ASM_COMPILER | Should -Be $compiler
+        } finally {
+            Remove-Item $compiler -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Preserves explicit CMake compiler vars when requested' {
+        $compiler = [System.IO.Path]::GetTempFileName()
+        try {
+            $explicit = 'C:\tools\custom-cl.exe'
+            $env:CARGOTOOLS_PRESERVE_CMAKE_COMPILER = '1'
+            $env:CMAKE_C_COMPILER = $explicit
+            & $script:SetCMakeMsvcCompilerDefaults -CompilerPath $compiler
+            $env:CMAKE_C_COMPILER | Should -Be $explicit
+        } finally {
+            Remove-Item $compiler -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'Resolve-NasmPath' {
+    It 'Returns an absolute NASM path when installed' {
+        $result = & $script:ResolveNasmPath
+        if ($result) {
+            $result | Should -Match 'nasm\.exe$'
+            Test-Path -LiteralPath $result | Should -BeTrue
+        } else {
+            $result | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Preserves explicit CMAKE_ASM_NASM_COMPILER during Initialize-CargoEnv' {
+        $explicit = 'C:\tools\nasm.exe'
+        $env:CMAKE_ASM_NASM_COMPILER = $explicit
+        Initialize-CargoEnv
+        $env:CMAKE_ASM_NASM_COMPILER | Should -Be $explicit
+    }
+
+    It 'Sets ASM_NASM when NASM is resolved automatically' {
+        $nasm = & $script:ResolveNasmPath
+        if (-not $nasm) {
+            Set-ItResult -Skipped -Because 'nasm is not installed on this runner'
+            return
+        }
+
+        Remove-Item Env:CMAKE_ASM_NASM_COMPILER -ErrorAction SilentlyContinue
+        Remove-Item Env:ASM_NASM -ErrorAction SilentlyContinue
+        Initialize-CargoEnv
+        $env:CMAKE_ASM_NASM_COMPILER | Should -Be $nasm
+        $env:ASM_NASM | Should -Be $nasm
+        ($env:PATH -split ';') | Should -Contain (Split-Path -Parent $nasm)
+    }
+}
+
 Describe 'Resolve-CacheRoot' {
     It 'Returns T:\RustCache when T: exists' {
         if (Test-Path 'T:\') {
@@ -461,7 +565,10 @@ Describe 'CARGO_INCREMENTAL + sccache conflict' {
             'CARGO_BUILD_JOBS', 'CARGO_USE_LLD', 'CARGO_USE_FASTLINK', 'CARGO_LLD_PATH',
             'RA_LRU_CAPACITY', 'CHALK_SOLVER_MAX_SIZE', 'RA_PROC_MACRO_WORKERS',
             'CARGO_USE_NEXTEST', 'CMAKE_GENERATOR', 'MAKEFLAGS', 'CMAKE_BUILD_PARALLEL_LEVEL',
-            'CARGO_PREFLIGHT_MODE'
+            'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER', 'CMAKE_ASM_COMPILER',
+            'CMAKE_ASM_NASM_COMPILER', 'ASM_NASM',
+            'CARGOTOOLS_PRESERVE_CMAKE_COMPILER',
+            'PROCESSOR_ARCHITECTURE', 'CARGO_PREFLIGHT_MODE'
         )
         foreach ($name in $clearVars) {
             Remove-Item "Env:$name" -ErrorAction SilentlyContinue

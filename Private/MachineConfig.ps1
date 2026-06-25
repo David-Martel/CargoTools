@@ -358,7 +358,25 @@ function Get-MsvcInfo {
     $vsVersion = $null
     $vsDisplayName = $null
     if ($instances.Count -gt 0) {
-        $selected = $instances |
+        $requestedVsVersion = $env:CARGOTOOLS_VS_VERSION
+        $candidateInstances = @($instances)
+        if ($requestedVsVersion) {
+            $escaped = [regex]::Escape($requestedVsVersion)
+            $matchedInstances = @($instances | Where-Object {
+                    $_.installationPath -match "\\$escaped\\" -or
+                    $_.installationVersion -like "$requestedVsVersion*"
+                })
+            if ($matchedInstances.Count -gt 0) {
+                $candidateInstances = $matchedInstances
+            }
+        } else {
+            $stableInstances = @($instances | Where-Object { $_.installationPath -match '\\2022\\' })
+            if ($stableInstances.Count -gt 0) {
+                $candidateInstances = $stableInstances
+            }
+        }
+
+        $selected = $candidateInstances |
             Sort-Object @{ Expression = { [version]$_.installationVersion }; Descending = $true } |
             Select-Object -First 1
         $vsPath = $selected.installationPath
@@ -368,14 +386,7 @@ function Get-MsvcInfo {
 
     # Fallback for preview/dev boxes where vswhere lags behind a new VS layout.
     if (-not $vsPath) {
-        $candidates = @(
-            'C:\Program Files\Microsoft Visual Studio\2026\Enterprise',
-            'C:\Program Files\Microsoft Visual Studio\2026\Professional',
-            'C:\Program Files\Microsoft Visual Studio\2026\Community',
-            'C:\Program Files\Microsoft Visual Studio\2026\BuildTools',
-            'C:\Program Files\Microsoft Visual Studio\18\Insiders',
-            'C:\Program Files\Microsoft Visual Studio\18\Preview',
-            'C:\Program Files\Microsoft Visual Studio\18\BuildTools',
+        $stableCandidates = @(
             'C:\Program Files\Microsoft Visual Studio\2022\Enterprise',
             'C:\Program Files\Microsoft Visual Studio\2022\Professional',
             'C:\Program Files\Microsoft Visual Studio\2022\Community',
@@ -383,6 +394,20 @@ function Get-MsvcInfo {
             'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools',
             'C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools'
         )
+        $previewCandidates = @(
+            'C:\Program Files\Microsoft Visual Studio\2026\Enterprise',
+            'C:\Program Files\Microsoft Visual Studio\2026\Professional',
+            'C:\Program Files\Microsoft Visual Studio\2026\Community',
+            'C:\Program Files\Microsoft Visual Studio\2026\BuildTools',
+            'C:\Program Files\Microsoft Visual Studio\18\Insiders',
+            'C:\Program Files\Microsoft Visual Studio\18\Preview',
+            'C:\Program Files\Microsoft Visual Studio\18\BuildTools'
+        )
+        $candidates = if ($env:CARGOTOOLS_VS_VERSION -match '^(2026|18)') {
+            @($previewCandidates + $stableCandidates)
+        } else {
+            @($stableCandidates + $previewCandidates)
+        }
         foreach ($candidate in $candidates) {
             $toolsRoot = Join-Path $candidate 'VC\Tools\MSVC'
             if (Test-Path $toolsRoot) {

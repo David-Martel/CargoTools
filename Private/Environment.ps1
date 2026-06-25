@@ -523,7 +523,9 @@ function Test-RustAnalyzerSingleton {
 }
 
 function Test-IsWindows {
-    return ($env:OS -eq 'Windows_NT')
+    return [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+        [System.Runtime.InteropServices.OSPlatform]::Windows
+    )
 }
 
 function Resolve-UserScript {
@@ -549,17 +551,33 @@ function Ensure-MsvcEnv {
     $msvcEnv = Resolve-UserScript 'msvc-env.ps1'
     if (-not $msvcEnv) { return }
 
-    # Prefer VS version from env, falling back to VS 2026/18.x if installed, then latest.
+    # Prefer stable VS by default; preview toolchains can break native CMake deps.
     $vsVersionArg = $env:CARGOTOOLS_VS_VERSION
     if (-not $vsVersionArg) {
-        $msvcInfo = Get-MsvcInfo
-        if ($msvcInfo -and $msvcInfo.VsPath) {
-            if ($msvcInfo.VsPath -match '\\(2026|18)\\') {
-                $vsVersionArg = '2026'
-            } elseif ($msvcInfo.VsVersion -and ([version]$msvcInfo.VsVersion).Major -ge 18) {
-                $vsVersionArg = '2026'
-            } elseif ($msvcInfo.VsPath -match '\\2022\\') {
+        $stableVsCandidates = @(
+            'C:\Program Files\Microsoft Visual Studio\2022\Enterprise',
+            'C:\Program Files\Microsoft Visual Studio\2022\Professional',
+            'C:\Program Files\Microsoft Visual Studio\2022\Community',
+            'C:\Program Files\Microsoft Visual Studio\2022\BuildTools',
+            'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools'
+        )
+        foreach ($candidate in $stableVsCandidates) {
+            if (Test-Path (Join-Path $candidate 'VC\Tools\MSVC')) {
                 $vsVersionArg = '2022'
+                break
+            }
+        }
+
+        if (-not $vsVersionArg) {
+            $msvcInfo = Get-MsvcInfo
+            if ($msvcInfo -and $msvcInfo.VsPath) {
+                if ($msvcInfo.VsPath -match '\\(2026|18)\\') {
+                    $vsVersionArg = '2026'
+                } elseif ($msvcInfo.VsVersion -and ([version]$msvcInfo.VsVersion).Major -ge 18) {
+                    $vsVersionArg = '2026'
+                } elseif ($msvcInfo.VsPath -match '\\2022\\') {
+                    $vsVersionArg = '2022'
+                }
             }
         }
     }
@@ -745,12 +763,71 @@ function Get-MsvcClExePath {
         }
     }
 
+    $msvcInfo = Get-MsvcInfo
+    if ($msvcInfo -and $msvcInfo.MsvcBinDir) {
+        $discoveredCl = Join-Path $msvcInfo.MsvcBinDir 'cl.exe'
+        if (Test-Path $discoveredCl) { return $discoveredCl }
+    }
+
     # Search PATH but skip known conflict directories
     $cleanPath = Get-SanitizedPath
     foreach ($dir in ($cleanPath -split ';')) {
         if (-not $dir) { continue }
         $candidate = Join-Path $dir 'cl.exe'
         if ((Test-Path $candidate) -and $dir -notlike '*Strawberry*' -and $dir -notlike '*mingw*') {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Set-CMakeMsvcCompilerDefaults {
+    <#
+    .SYNOPSIS
+    Pins CMake native builds to the validated MSVC compiler.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$CompilerPath
+    )
+
+    if (-not $CompilerPath -or -not (Test-Path -LiteralPath $CompilerPath)) { return }
+    if ($env:CARGOTOOLS_PRESERVE_CMAKE_COMPILER -and (Test-Truthy $env:CARGOTOOLS_PRESERVE_CMAKE_COMPILER)) {
+        return
+    }
+
+    foreach ($name in @('CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER', 'CMAKE_ASM_COMPILER')) {
+        $current = [Environment]::GetEnvironmentVariable($name, 'Process')
+        $shouldPin = [string]::IsNullOrWhiteSpace($current)
+        if (-not $shouldPin) {
+            $pointsToMissingFile = ($current -match '^[A-Za-z]:[\\/]') -and -not (Test-Path -LiteralPath $current)
+            $pointsToPreviewVs = $current -match '\\Microsoft Visual Studio\\(18|2026)\\'
+            $isBareCl = $current -ieq 'cl.exe'
+            $shouldPin = $pointsToMissingFile -or $pointsToPreviewVs -or $isBareCl
+        }
+
+        if ($shouldPin) {
+            [Environment]::SetEnvironmentVariable($name, $CompilerPath, 'Process')
+        }
+    }
+}
+
+function Resolve-NasmPath {
+    [CmdletBinding()]
+    param()
+
+    $cmd = Get-Command nasm -CommandType Application -ErrorAction SilentlyContinue
+    if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) {
+        return $cmd.Source
+    }
+
+    foreach ($candidate in @(
+            'C:\Program Files\NASM\nasm.exe',
+            'C:\Program Files (x86)\NASM\nasm.exe',
+            'C:\Strawberry\c\bin\nasm.exe'
+        )) {
+        if (Test-Path -LiteralPath $candidate) {
             return $candidate
         }
     }
@@ -918,13 +995,32 @@ function Initialize-CargoEnv {
     }
 
     if (Test-IsWindows) {
+        if (-not $env:PROCESSOR_ARCHITECTURE) { $env:PROCESSOR_ARCHITECTURE = 'AMD64' }
         $msvcCl = Get-MsvcClExePath
+        $resolvedNasmPath = $null
         if ($msvcCl) {
             if (-not $env:CC -or ($env:CC -eq 'cl.exe')) { $env:CC = $msvcCl }
             if (-not $env:CXX -or ($env:CXX -eq 'cl.exe')) { $env:CXX = $msvcCl }
+            Set-CMakeMsvcCompilerDefaults -CompilerPath $msvcCl
+        }
+        if (-not $env:CMAKE_ASM_NASM_COMPILER) {
+            $resolvedNasmPath = Resolve-NasmPath
+            if ($resolvedNasmPath) {
+                $env:CMAKE_ASM_NASM_COMPILER = $resolvedNasmPath
+                if (-not $env:ASM_NASM) { $env:ASM_NASM = $resolvedNasmPath }
+            }
+        } else {
+            $resolvedNasmPath = $env:CMAKE_ASM_NASM_COMPILER
         }
         # Sanitize PATH to prevent Strawberry Perl/Git mingw from shadowing MSVC
         $env:PATH = Get-SanitizedPath
+        if ($resolvedNasmPath -and (Test-Path -LiteralPath $resolvedNasmPath)) {
+            $nasmDir = Split-Path -Parent $resolvedNasmPath
+            $pathParts = @($env:PATH -split ';' | Where-Object { $_ })
+            if ($pathParts -notcontains $nasmDir) {
+                $env:PATH = ($pathParts + $nasmDir) -join ';'
+            }
+        }
     }
 
     if ($env:CL) {
