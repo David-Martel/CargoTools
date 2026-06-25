@@ -335,6 +335,12 @@ Describe 'Ensure-CargoDriverArgSeparator' {
         $result = & $script:EnsureCargoDriverArgSeparator @('clippy', '--all-targets', '--', '-D', 'warnings')
         $result | Should -Be @('clippy', '--all-targets', '--', '-D', 'warnings')
     }
+
+    It 'Returns a one-item array for scalar cargo commands' {
+        $result = @(& $script:EnsureCargoDriverArgSeparator @('check'))
+        $result | Should -HaveCount 1
+        $result[0] | Should -Be 'check'
+    }
 }
 
 Describe 'Assert-AllowedValue' {

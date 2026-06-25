@@ -263,7 +263,6 @@ function Get-ManagedCargoEnvDefaults {
         SCCACHE_CACHE_SIZE     = '30G'
         SCCACHE_IDLE_TIMEOUT   = '3600'
         SCCACHE_DIRECT         = 'true'
-        SCCACHE_SERVER_PORT    = '4400'
         SCCACHE_LOG            = 'warn'
         SCCACHE_ERROR_LOG      = $sccacheErrorLog
         SCCACHE_NO_DAEMON      = '0'

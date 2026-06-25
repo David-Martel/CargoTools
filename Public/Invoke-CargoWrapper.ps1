@@ -592,7 +592,7 @@ Invoke-CargoWrapper --wrapper-help
                     }
                 }
 
-                $driverSeparated = Ensure-CargoDriverArgSeparator $passThrough.ToArray()
+                $driverSeparated = @(Ensure-CargoDriverArgSeparator $passThrough.ToArray())
                 if ($driverSeparated.Count -ne $passThrough.Count) {
                     $passThrough = New-Object System.Collections.Generic.List[string]
                     foreach ($a in $driverSeparated) { $passThrough.Add($a) }
@@ -601,7 +601,7 @@ Invoke-CargoWrapper --wrapper-help
 
                 # LLM JSON message format injection
                 if ($script:LlmOutputMode -and $primaryCmd) {
-                    $injected = Get-MessageFormatArgs -PrimaryCommand $primaryCmd -ArgsList $passThrough.ToArray()
+                    $injected = @(Get-MessageFormatArgs -PrimaryCommand $primaryCmd -ArgsList $passThrough.ToArray())
                     if ($injected.Count -ne $passThrough.Count) {
                         $passThrough = New-Object System.Collections.Generic.List[string]
                         foreach ($a in $injected) { $passThrough.Add($a) }

@@ -69,22 +69,33 @@ if ($venvPath -and -not $env:VIRTUAL_ENV) {
 
 # sccache setup
 $savedRustcWrapper = $env:RUSTC_WRAPPER
-if ($noSccache) {
+$disableSccacheForInvocation = $noSccache
+if ($disableSccacheForInvocation) {
     if (Test-Path Env:RUSTC_WRAPPER) { Remove-Item Env:RUSTC_WRAPPER }
 } else {
+    $sccacheOk = $false
     if (-not (Import-CargoToolsResilient -EmitLlm:$ctx.LlmMode)) {
         # Non-fatal for maturin; proceed without sccache.
     } else {
         try {
-            Start-SccacheServer | Out-Null
+            $sccacheOk = [bool](Start-SccacheServer)
         } catch {
             Write-Verbose "Unable to start sccache for maturin: $($_.Exception.Message)"
         }
     }
-    if (-not $env:RUSTC_WRAPPER) {
-        $sccacheCmd = Get-Command sccache -ErrorAction SilentlyContinue
+    if (-not $sccacheOk) {
+        $disableSccacheForInvocation = $true
+    } elseif (-not $env:RUSTC_WRAPPER) {
+        $sccacheCmd = @(Get-Command sccache -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
         if ($sccacheCmd) { $env:RUSTC_WRAPPER = 'sccache' }
     }
+}
+if ($disableSccacheForInvocation) {
+    if ($env:RUSTC_WRAPPER -eq 'sccache') {
+        Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
+    }
+    $finalArgs.Add('--config')
+    $finalArgs.Add('build.rustc-wrapper=""')
 }
 
 $finalMaturinArgs = [string[]]$finalArgs.ToArray()
