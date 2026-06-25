@@ -137,6 +137,36 @@ function Initialize-CargoToolsCommandAcceleration {
     return $script:CargoToolsUseProfileAccelerator
 }
 
+function Select-CargoCommandPathCandidate {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$Candidate
+    )
+
+    foreach ($item in @($Candidate)) {
+        if ($null -eq $item) { continue }
+
+        if ($item -is [string]) {
+            $text = $item.Trim()
+            if ($text) { return $text }
+            continue
+        }
+
+        foreach ($propertyName in @('Source', 'Path')) {
+            $property = $item.PSObject.Properties[$propertyName]
+            if (-not $property) { continue }
+
+            foreach ($value in @($property.Value)) {
+                if ($null -eq $value) { continue }
+                $text = ([string]$value).Trim()
+                if ($text) { return $text }
+            }
+        }
+    }
+
+    return $null
+}
+
 function Find-CargoCommandPath {
     [CmdletBinding()]
     param(
@@ -167,29 +197,31 @@ function Find-CargoCommandPath {
     Initialize-CargoToolsCommandAcceleration | Out-Null
 
     if ($script:CargoToolsUseProfileAccelerator -and (Get-Command Find-CommandCached -ErrorAction SilentlyContinue)) {
-        try { $resolved = Find-CommandCached -Name $Name } catch { $resolved = $null }
+        try { $resolved = Select-CargoCommandPathCandidate (Find-CommandCached -Name $Name) } catch { $resolved = $null }
     }
 
     if (-not $resolved -and $script:CargoToolsUseProfileAccelerator -and (Get-Command Find-CommandNative -ErrorAction SilentlyContinue)) {
-        try { $resolved = Find-CommandNative -Name $Name } catch { $resolved = $null }
+        try { $resolved = Select-CargoCommandPathCandidate (Find-CommandNative -Name $Name) } catch { $resolved = $null }
     }
 
     if (-not $resolved) {
         $cmd = $null
         try {
             if ($AllowNonExternal) {
-                $cmd = Get-Command $Name -ErrorAction SilentlyContinue
+                $cmd = @(Get-Command $Name -ErrorAction SilentlyContinue) | Select-Object -First 1
             } else {
-                $cmd = Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue
+                $cmd = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
             }
         } catch {
             $cmd = $null
         }
 
         if ($cmd) {
-            $resolved = if ($cmd.Source) { $cmd.Source } else { $cmd.Path }
+            $resolved = Select-CargoCommandPathCandidate $cmd
         }
     }
+
+    $resolved = Select-CargoCommandPathCandidate $resolved
 
     if (-not $BypassCache) {
         $script:CargoToolsCommandPathCache[$cacheKey] = $resolved
@@ -932,7 +964,10 @@ function Initialize-CargoEnv {
     if (-not $env:SCCACHE_STARTUP_TIMEOUT) { $env:SCCACHE_STARTUP_TIMEOUT = '30' }
     if (-not $env:SCCACHE_REQUEST_TIMEOUT) { $env:SCCACHE_REQUEST_TIMEOUT = '180' }
     if (-not $env:SCCACHE_DIRECT) { $env:SCCACHE_DIRECT = 'true' }
-    if (-not $env:SCCACHE_SERVER_PORT) { $env:SCCACHE_SERVER_PORT = '4400' }
+    if (-not $env:SCCACHE_SERVER_PORT) { $env:SCCACHE_SERVER_PORT = '4293' }
+    # Self-heal: a stale/inherited port (e.g. 14400) may now sit inside a Windows excluded range and
+    # silently break `sccache --start-server` (os error 10013). Validate + fall back to a free port.
+    $env:SCCACHE_SERVER_PORT = Resolve-FreeSccachePort -DesiredPort $env:SCCACHE_SERVER_PORT
     if (-not $env:SCCACHE_LOG) { $env:SCCACHE_LOG = 'warn' }
     if (-not $env:SCCACHE_ERROR_LOG) { $env:SCCACHE_ERROR_LOG = (Join-Path $CacheRoot 'sccache\error.log') }
     if (-not $env:SCCACHE_NO_DAEMON) { $env:SCCACHE_NO_DAEMON = '0' }
@@ -1066,7 +1101,7 @@ function Start-SccacheServer {
         $procs = @(Get-Process -Name 'sccache' -ErrorAction SilentlyContinue)
         if ($procs.Count -gt 1) {
             Write-Verbose "[Memory] Multiple sccache instances ($($procs.Count)), consolidating..."
-            sccache --stop-server 2>$null | Out-Null
+            & $sccacheCmd --stop-server 2>$null | Out-Null
             Start-Sleep -Milliseconds 500
             $procs = @(Get-Process -Name 'sccache' -ErrorAction SilentlyContinue)
             if ($procs.Count -gt 1 -and $Force) {
@@ -1081,7 +1116,7 @@ function Start-SccacheServer {
         $memMB = Get-SccacheMemoryMB
         if ($procs.Count -eq 1 -and $memMB -gt $MaxMemoryMB) {
             Write-Verbose "[Memory] sccache using ${memMB}MB > ${MaxMemoryMB}MB limit, restarting..."
-            sccache --stop-server 2>$null | Out-Null
+            & $sccacheCmd --stop-server 2>$null | Out-Null
             Start-Sleep -Milliseconds 500
             $procs = @()
         }
@@ -1168,7 +1203,10 @@ function Test-SccacheHealth {
 function Stop-SccacheServer {
     $existing = Get-Process -Name 'sccache' -ErrorAction SilentlyContinue
     if (-not $existing) { return }
-    sccache --stop-server 2>$null | Out-Null
+    $sccacheCmd = Resolve-Sccache
+    if ($sccacheCmd) {
+        & $sccacheCmd --stop-server 2>$null | Out-Null
+    }
     Start-Sleep -Milliseconds 500
     $remaining = Get-Process -Name 'sccache' -ErrorAction SilentlyContinue
     if ($remaining) {

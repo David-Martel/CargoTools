@@ -20,6 +20,7 @@ BeforeAll {
     $script:GetOptimalBuildJobs = & $module { ${function:Get-OptimalBuildJobs} }
     $script:GetSanitizedPath = & $module { ${function:Get-SanitizedPath} }
     $script:GetMsvcClExePath = & $module { ${function:Get-MsvcClExePath} }
+    $script:ResolveFreeSccachePort = & $module { ${function:Resolve-FreeSccachePort} }
 
     # Save env state to restore after tests
     $script:SavedEnv = @{}
@@ -144,9 +145,10 @@ Describe 'Initialize-CargoEnv' {
             Initialize-CargoEnv
             $env:SCCACHE_DIRECT | Should -Be 'true'
         }
-        It 'Sets SCCACHE_SERVER_PORT to 4400' {
+        It 'Sets SCCACHE_SERVER_PORT to a numeric usable value' {
             Initialize-CargoEnv
-            $env:SCCACHE_SERVER_PORT | Should -Be '4400'
+            $env:SCCACHE_SERVER_PORT | Should -Match '^\d+$'
+            [int]$env:SCCACHE_SERVER_PORT | Should -BeGreaterThan 0
         }
         It 'Sets SCCACHE_IDLE_TIMEOUT' {
             Initialize-CargoEnv
@@ -223,6 +225,27 @@ Describe 'Initialize-CargoEnv' {
                 Set-ItResult -Skipped -Because 'ninja not installed'
             }
         }
+    }
+}
+
+Describe 'Resolve-FreeSccachePort' {
+    It 'Normalizes invalid desired ports to a numeric fallback' {
+        $result = & $script:ResolveFreeSccachePort -DesiredPort 'not-a-port'
+        $result | Should -Match '^\d+$'
+        [int]$result | Should -BeGreaterThan 0
+    }
+
+    It 'Preserves an explicitly usable port when available' {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        try {
+            $listener.Start()
+            $port = ([System.Net.IPEndPoint]$listener.LocalEndpoint).Port
+        } finally {
+            $listener.Stop()
+        }
+
+        $result = & $script:ResolveFreeSccachePort -DesiredPort "$port"
+        $result | Should -Be "$port"
     }
 }
 

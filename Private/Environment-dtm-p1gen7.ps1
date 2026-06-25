@@ -360,6 +360,9 @@ function Initialize-CargoEnv {
     if (-not $env:SCCACHE_REQUEST_TIMEOUT) { $env:SCCACHE_REQUEST_TIMEOUT = '180' }
     if (-not $env:SCCACHE_DIRECT) { $env:SCCACHE_DIRECT = 'true' }
     if (-not $env:SCCACHE_SERVER_PORT) { $env:SCCACHE_SERVER_PORT = '4400' }
+    # Self-heal: a stale/inherited port (e.g. 14400) may now sit inside a Windows excluded range and
+    # silently break `sccache --start-server` (os error 10013). Validate + fall back to a free port.
+    $env:SCCACHE_SERVER_PORT = Resolve-FreeSccachePort -DesiredPort $env:SCCACHE_SERVER_PORT
     if (-not $env:SCCACHE_LOG) { $env:SCCACHE_LOG = 'warn' }
     if (-not $env:SCCACHE_ERROR_LOG) { $env:SCCACHE_ERROR_LOG = (Join-Path $CacheRoot 'sccache\error.log') }
     if (-not $env:SCCACHE_NO_DAEMON) { $env:SCCACHE_NO_DAEMON = '0' }

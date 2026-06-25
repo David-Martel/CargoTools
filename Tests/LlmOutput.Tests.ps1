@@ -78,6 +78,12 @@ Describe 'Get-MessageFormatArgs' {
         $result = & $script:GetMessageFormatArgs -PrimaryCommand 'clippy' -ArgsList @('clippy', '--all-targets', '--', '-D', 'warnings')
         $result | Should -Be @('clippy', '--all-targets', '--message-format=json', '--', '-D', 'warnings')
     }
+
+    It 'Returns a one-item array for unsupported scalar commands' {
+        $result = @(& $script:GetMessageFormatArgs -PrimaryCommand 'clean' -ArgsList @('clean'))
+        $result | Should -HaveCount 1
+        $result[0] | Should -Be 'clean'
+    }
 }
 
 Describe 'ConvertFrom-CargoJson' {
