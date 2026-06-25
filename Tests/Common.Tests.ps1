@@ -15,6 +15,7 @@ BeforeAll {
     $module = Get-Module CargoTools
     $script:ConvertArgsToShell = & $module { ${function:Convert-ArgsToShell} }
     $script:StripArgsAfterDoubleDash = & $module { ${function:Strip-ArgsAfterDoubleDash} }
+    $script:SplitCargoArgsAtDoubleDash = & $module { ${function:Split-CargoArgsAtDoubleDash} }
     $script:NormalizeArgsList = & $module { ${function:Normalize-ArgsList} }
     $script:GetPrimaryCommand = & $module { ${function:Get-PrimaryCommand} }
     $script:ClassifyTarget = & $module { ${function:Classify-Target} }
@@ -22,6 +23,7 @@ BeforeAll {
     $script:AssertAllowedValue = & $module { ${function:Assert-AllowedValue} }
     $script:AssertNotBoth = & $module { ${function:Assert-NotBoth} }
     $script:EnsureRunArgSeparator = & $module { ${function:Ensure-RunArgSeparator} }
+    $script:EnsureCargoDriverArgSeparator = & $module { ${function:Ensure-CargoDriverArgSeparator} }
     $script:GetTargetFromArgs = & $module { ${function:Get-TargetFromArgs} }
     $script:EnsureMessageFormatShort = & $module { ${function:Ensure-MessageFormatShort} }
 }
@@ -195,6 +197,29 @@ Describe 'Strip-ArgsAfterDoubleDash' {
     }
 }
 
+Describe 'Split-CargoArgsAtDoubleDash' {
+    It 'Preserves cargo and clippy driver args separately' {
+        $result = & $script:SplitCargoArgsAtDoubleDash @('clippy', '-p', 'intublade-vcam', '--all-targets', '--', '-D', 'warnings')
+        $result.HasSeparator | Should -BeTrue
+        $result.CargoArgs | Should -Be @('clippy', '-p', 'intublade-vcam', '--all-targets')
+        $result.ToolArgs | Should -Be @('-D', 'warnings')
+    }
+
+    It 'Preserves test harness args separately' {
+        $result = & $script:SplitCargoArgsAtDoubleDash @('test', '--workspace', '--', '--nocapture')
+        $result.HasSeparator | Should -BeTrue
+        $result.CargoArgs | Should -Be @('test', '--workspace')
+        $result.ToolArgs | Should -Be @('--nocapture')
+    }
+
+    It 'Handles trailing separator without tool args' {
+        $result = & $script:SplitCargoArgsAtDoubleDash @('clippy', '--')
+        $result.HasSeparator | Should -BeTrue
+        $result.CargoArgs | Should -Be @('clippy')
+        $result.ToolArgs | Should -HaveCount 0
+    }
+}
+
 Describe 'Get-PrimaryCommand' {
     It 'Finds build command' {
         $result = & $script:GetPrimaryCommand @('build', '--release')
@@ -287,6 +312,28 @@ Describe 'Ensure-RunArgSeparator' {
         $releaseIdx = [Array]::IndexOf($result, '--release')
         $dashIdx = [Array]::IndexOf($result, '--')
         $releaseIdx | Should -BeLessThan $dashIdx
+    }
+}
+
+Describe 'Ensure-CargoDriverArgSeparator' {
+    It 'Inserts -- before clippy lint levels consumed by rustc' {
+        $result = & $script:EnsureCargoDriverArgSeparator @('clippy', '--all-targets', '--all-features', '-D', 'warnings')
+        $result | Should -Be @('clippy', '--all-targets', '--all-features', '--', '-D', 'warnings')
+    }
+
+    It 'Inserts -- before combined clippy lint flags' {
+        $result = & $script:EnsureCargoDriverArgSeparator @('clippy', '-p', 'foo', '-Dwarnings')
+        $result | Should -Be @('clippy', '-p', 'foo', '--', '-Dwarnings')
+    }
+
+    It 'Inserts -- before test harness flags' {
+        $result = & $script:EnsureCargoDriverArgSeparator @('test', '--workspace', '--nocapture')
+        $result | Should -Be @('test', '--workspace', '--', '--nocapture')
+    }
+
+    It 'Leaves already separated args unchanged' {
+        $result = & $script:EnsureCargoDriverArgSeparator @('clippy', '--all-targets', '--', '-D', 'warnings')
+        $result | Should -Be @('clippy', '--all-targets', '--', '-D', 'warnings')
     }
 }
 

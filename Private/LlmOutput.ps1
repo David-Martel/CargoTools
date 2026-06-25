@@ -326,6 +326,12 @@ function Get-MessageFormatArgs {
         [string[]]$ArgsList = @()
     )
 
+    # cargo-nextest is invoked as `cargo nextest run`; it does not accept cargo's
+    # `--message-format=json` value. Keep nextest output native.
+    if ($ArgsList.Count -gt 0 -and $ArgsList[0] -eq 'nextest') {
+        return $ArgsList
+    }
+
     # Only inject for commands that support --message-format
     $supported = @('build', 'check', 'clippy', 'test', 'bench', 'b')
     if ($supported -notcontains $PrimaryCommand) {
@@ -339,9 +345,14 @@ function Get-MessageFormatArgs {
         }
     }
 
+    $split = Split-CargoArgsAtDoubleDash -ArgsList $ArgsList
     $result = New-Object System.Collections.Generic.List[string]
-    $result.AddRange([string[]]$ArgsList)
+    $result.AddRange([string[]]$split.CargoArgs)
     $result.Add('--message-format=json')
+    if ($split.HasSeparator) {
+        $result.Add('--')
+        $result.AddRange([string[]]$split.ToolArgs)
+    }
     return $result.ToArray()
 }
 

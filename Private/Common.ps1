@@ -289,12 +289,38 @@ function Assert-NotBoth {
 function Strip-ArgsAfterDoubleDash {
     param([string[]]$ArgsList)
 
+    return (Split-CargoArgsAtDoubleDash -ArgsList $ArgsList).CargoArgs
+}
+
+function Split-CargoArgsAtDoubleDash {
+    param([string[]]$ArgsList)
+
     $ArgsList = Normalize-ArgsList $ArgsList
-    if (-not $ArgsList -or $ArgsList.Count -eq 0) { return $ArgsList }
+    if (-not $ArgsList -or $ArgsList.Count -eq 0) {
+        return [pscustomobject]@{
+            CargoArgs = @()
+            ToolArgs = @()
+            HasSeparator = $false
+        }
+    }
+
     $index = [Array]::IndexOf($ArgsList, '--')
-    if ($index -lt 0) { return $ArgsList }
-    if ($index -eq 0) { return @() }
-    return $ArgsList[0..($index - 1)]
+    if ($index -lt 0) {
+        return [pscustomobject]@{
+            CargoArgs = $ArgsList
+            ToolArgs = @()
+            HasSeparator = $false
+        }
+    }
+
+    $cargoArgs = if ($index -eq 0) { @() } else { @($ArgsList[0..($index - 1)]) }
+    $toolArgs = if ($index + 1 -ge $ArgsList.Count) { @() } else { @($ArgsList[($index + 1)..($ArgsList.Count - 1)]) }
+
+    return [pscustomobject]@{
+        CargoArgs = $cargoArgs
+        ToolArgs = $toolArgs
+        HasSeparator = $true
+    }
 }
 
 function Ensure-RunArgSeparator {
@@ -348,6 +374,68 @@ function Ensure-RunArgSeparator {
             $result.Add('--')
             for ($j = $i; $j -lt $ArgsList.Count; $j++) { $result.Add([string]$ArgsList[$j]) }
             return $result.ToArray()
+        }
+    }
+
+    return $ArgsList
+}
+
+function Insert-ArgSeparatorAt {
+    param(
+        [string[]]$ArgsList,
+        [int]$Index
+    )
+
+    $ArgsList = Normalize-ArgsList $ArgsList
+    if ($Index -lt 0 -or $Index -ge $ArgsList.Count) { return $ArgsList }
+
+    $result = New-Object System.Collections.Generic.List[string]
+    for ($j = 0; $j -lt $Index; $j++) { $result.Add([string]$ArgsList[$j]) }
+    $result.Add('--')
+    for ($j = $Index; $j -lt $ArgsList.Count; $j++) { $result.Add([string]$ArgsList[$j]) }
+    return $result.ToArray()
+}
+
+function Ensure-CargoDriverArgSeparator {
+    param([string[]]$ArgsList)
+
+    $ArgsList = Normalize-ArgsList $ArgsList
+    if (-not $ArgsList -or $ArgsList.Count -eq 0) { return $ArgsList }
+    if ($ArgsList -contains '--') { return $ArgsList }
+
+    $primary = Get-PrimaryCommand $ArgsList
+    if (-not $primary) { return $ArgsList }
+
+    $rustcExactFlags = @(
+        '-A', '-W', '-D', '-F', '-C', '-L', '-l',
+        '--cap-lints', '--cfg', '--check-cfg', '--crate-name', '--crate-type',
+        '--diagnostic-width', '--edition', '--emit', '--error-format', '--extern',
+        '--out-dir', '--remap-path-prefix', '--sysroot', '--target-feature'
+    )
+    $rustcPrefixFlags = @('-A', '-W', '-D', '-F', '-C', '-L', '-l')
+    $testHarnessFlags = @(
+        '--bench', '--exact', '--format', '--ignored', '--include-ignored',
+        '--list', '--nocapture', '--show-output', '--skip', '--test-threads'
+    )
+
+    for ($i = 0; $i -lt $ArgsList.Count; $i++) {
+        $arg = $ArgsList[$i]
+        if ($i -eq 0 -and $arg -like '+*') { continue }
+        if ($arg -eq $primary) { continue }
+
+        if ($primary -in @('clippy', 'rustc')) {
+            if ($rustcExactFlags -contains $arg) {
+                return Insert-ArgSeparatorAt -ArgsList $ArgsList -Index $i
+            }
+            foreach ($prefix in $rustcPrefixFlags) {
+                if ($arg.StartsWith($prefix) -and $arg.Length -gt $prefix.Length) {
+                    return Insert-ArgSeparatorAt -ArgsList $ArgsList -Index $i
+                }
+            }
+        }
+
+        if ($primary -in @('test', 'bench') -and $testHarnessFlags -contains $arg) {
+            return Insert-ArgSeparatorAt -ArgsList $ArgsList -Index $i
         }
     }
 
