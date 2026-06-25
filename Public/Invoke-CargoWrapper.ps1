@@ -634,7 +634,7 @@ Invoke-CargoWrapper --wrapper-help
                 if ($cargoExitCode -ne 0) {
                     Write-CargoBuildPhase -Phase 'Build' -Failed
 
-                    # Check if sccache died mid-build â€” auto-retry once if so
+                    # Check if sccache died mid-build; auto-retry once if so.
                     $sccacheRetried = $false
                     if ($env:RUSTC_WRAPPER -eq 'sccache') {
                         $sccHealth = Test-SccacheHealth
@@ -656,6 +656,31 @@ Invoke-CargoWrapper --wrapper-help
                                 } else {
                                     Write-CargoStatus -Phase 'Build' -Message 'sccache restart failed. Hint: retry with --raw to bypass sccache' -Type 'Warning'
                                 }
+                            }
+                        }
+
+                        if ($cargoExitCode -ne 0 -and (Test-SccacheInfrastructureFailureFromLog -SinceUtc $buildStartTime.ToUniversalTime())) {
+                            Write-CargoStatus -Phase 'Build' -Message 'sccache infrastructure failure detected in current build log; retrying once without sccache.' -Type 'Warning'
+                            $retryArgs = @(Add-NoSccacheCargoConfigArgs -ArgsList $buildArgs)
+                            $savedRustcWrapper = $env:RUSTC_WRAPPER
+                            $savedCargoRustcWrapper = $env:CARGO_BUILD_RUSTC_WRAPPER
+                            try {
+                                $env:RUSTC_WRAPPER = ''
+                                $env:CARGO_BUILD_RUSTC_WRAPPER = ''
+                                Write-CargoBuildPhase -Phase 'Build' -Starting
+                                & $rustupPath run $toolchain cargo @retryArgs
+                                $cargoExitCode = $LASTEXITCODE
+                                $sccacheRetried = $true
+                                if ($cargoExitCode -eq 0) {
+                                    $buildElapsed = (Get-Date) - $buildStartTime
+                                    Write-CargoBuildPhase -Phase 'Build' -Complete
+                                    Write-CargoStatus -Phase 'Build' -Message "Succeeded on no-sccache retry in $([Math]::Round($buildElapsed.TotalSeconds, 2))s" -Type 'Success' -MinVerbosity 1
+                                }
+                            } finally {
+                                if ($null -ne $savedRustcWrapper) { $env:RUSTC_WRAPPER = $savedRustcWrapper }
+                                else { Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue }
+                                if ($null -ne $savedCargoRustcWrapper) { $env:CARGO_BUILD_RUSTC_WRAPPER = $savedCargoRustcWrapper }
+                                else { Remove-Item Env:CARGO_BUILD_RUSTC_WRAPPER -ErrorAction SilentlyContinue }
                             }
                         }
                     }
@@ -834,9 +859,6 @@ Invoke-CargoWrapper --wrapper-help
         if ($popLocation) { Pop-Location }
     }
 }
-
-
-
 
 
 
