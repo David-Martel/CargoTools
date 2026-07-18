@@ -420,6 +420,27 @@ function Add-NoSccacheCargoConfigArgs {
     return $args.ToArray()
 }
 
+function Test-SccacheRustcWrapper {
+    <#
+    .SYNOPSIS
+    Tests whether a rustc-wrapper value resolves to the sccache executable.
+
+    .DESCRIPTION
+    Callers may configure RUSTC_WRAPPER as either the command name (`sccache`)
+    or an absolute executable path. Comparing only to the command name misses
+    repositories that deliberately pin the canonical workstation binary.
+    #>
+    param(
+        [AllowNull()][string]$Wrapper = $env:RUSTC_WRAPPER
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Wrapper)) { return $false }
+
+    $wrapperPath = $Wrapper.Trim().Trim('"')
+    $wrapperName = [System.IO.Path]::GetFileNameWithoutExtension($wrapperPath)
+    return $wrapperName -ieq 'sccache'
+}
+
 function Ensure-RunArgSeparator {
     param([string[]]$ArgsList)
 

@@ -457,7 +457,7 @@ Invoke-CargoWrapper --wrapper-help
         if (-not $sccacheOk) {
             # sccache failed to start - clear RUSTC_WRAPPER to prevent cargo from trying
             # to invoke a non-functional sccache, which would produce confusing errors
-            if ($env:RUSTC_WRAPPER -eq 'sccache') {
+            if (Test-SccacheRustcWrapper -Wrapper $env:RUSTC_WRAPPER) {
                 Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
                 Write-CargoStatus -Phase 'Environment' -Message 'sccache unavailable, building without cache acceleration' -Type 'Warning' -MinVerbosity 1
             }
@@ -636,7 +636,7 @@ Invoke-CargoWrapper --wrapper-help
 
                     # Check if sccache died mid-build; auto-retry once if so.
                     $sccacheRetried = $false
-                    if ($env:RUSTC_WRAPPER -eq 'sccache') {
+                    if (Test-SccacheRustcWrapper -Wrapper $env:RUSTC_WRAPPER) {
                         $sccHealth = Test-SccacheHealth
                         if (-not $sccHealth.Healthy) {
                             Write-CargoStatus -Phase 'Build' -Message "sccache failed during build: $($sccHealth.Error)" -Type 'Warning'
@@ -859,6 +859,5 @@ Invoke-CargoWrapper --wrapper-help
         if ($popLocation) { Pop-Location }
     }
 }
-
 
 

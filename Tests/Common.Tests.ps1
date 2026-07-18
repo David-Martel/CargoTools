@@ -29,6 +29,22 @@ BeforeAll {
     $script:TestSccacheInfrastructureFailureText = & $module { ${function:Test-SccacheInfrastructureFailureText} }
     $script:TestSccacheInfrastructureFailureFromLog = & $module { ${function:Test-SccacheInfrastructureFailureFromLog} }
     $script:AddNoSccacheCargoConfigArgs = & $module { ${function:Add-NoSccacheCargoConfigArgs} }
+    $script:TestSccacheRustcWrapper = & $module { ${function:Test-SccacheRustcWrapper} }
+}
+
+Describe 'Test-SccacheRustcWrapper' {
+    It 'Recognizes the command name' {
+        & $script:TestSccacheRustcWrapper 'sccache' | Should -BeTrue
+    }
+
+    It 'Recognizes a canonical absolute executable path' {
+        & $script:TestSccacheRustcWrapper 'C:\Users\david\bin\sccache.exe' | Should -BeTrue
+    }
+
+    It 'Rejects unrelated wrapper commands and empty values' {
+        & $script:TestSccacheRustcWrapper 'rustc-wrapper.exe' | Should -BeFalse
+        & $script:TestSccacheRustcWrapper $null | Should -BeFalse
+    }
 }
 
 Describe 'Test-Truthy' {
