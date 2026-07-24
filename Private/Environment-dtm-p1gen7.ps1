@@ -426,12 +426,24 @@ function Initialize-CargoEnv {
     if (-not $env:MAKEFLAGS) { $env:MAKEFLAGS = "-j$optimalJobs" }
     if (-not $env:CMAKE_BUILD_PARALLEL_LEVEL) { $env:CMAKE_BUILD_PARALLEL_LEVEL = "$optimalJobs" }
 
-    if (-not $env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR = Join-Path $CacheRoot 'cargo-target' }
+    # Deliberately NOT setting a CARGO_TARGET_DIR default here (unlike CARGO_HOME/RUSTUP_HOME
+    # below). ~/.cargo/config.toml already sets [build].target-dir = T:\RustCache\cargo-target
+    # as the machine-wide default at the correct precedence layer (config file). Setting the
+    # same path again via env var was redundant for that default case AND actively harmful:
+    # CARGO_TARGET_DIR (env) outranks a project's own .cargo/config.toml (cargo precedence is
+    # --target-dir flag > CARGO_TARGET_DIR env > config file), so it silently defeated any
+    # per-repo target-dir isolation a project added to stop colliding with same-named crates
+    # from other repos in the shared cache (reproduced 2026-07-24: a repo-local
+    # .cargo/config.toml `target-dir = "target"` in vigil-utils/rust/vigil_device_resources
+    # was ignored until this line was removed, because CARGO_TARGET_DIR was already set from
+    # here first). Only an explicit caller-set env var (or --target-dir) should win now; the
+    # implicit machine default lives in the global config file, where per-repo overrides can
+    # actually take effect.
     if (-not $env:CARGO_HOME) { $env:CARGO_HOME = Join-Path $CacheRoot 'cargo-home' }
     if (-not $env:RUSTUP_HOME) { $env:RUSTUP_HOME = Join-Path $CacheRoot 'rustup' }
 
     Ensure-Directory -Path $env:SCCACHE_DIR
-    Ensure-Directory -Path $env:CARGO_TARGET_DIR
+    if ($env:CARGO_TARGET_DIR) { Ensure-Directory -Path $env:CARGO_TARGET_DIR }
     Ensure-Directory -Path $env:CARGO_HOME
     Ensure-Directory -Path $env:RUSTUP_HOME
     if ($env:RUST_ANALYZER_CACHE_DIR) { Ensure-Directory -Path $env:RUST_ANALYZER_CACHE_DIR }
