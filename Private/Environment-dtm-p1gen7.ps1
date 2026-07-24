@@ -336,12 +336,25 @@ function Initialize-CargoEnv {
 
     $CacheRoot = Resolve-CacheRoot -CacheRoot $CacheRoot
     $sccacheExe = Resolve-Sccache
-    if ($sccacheExe) {
+    # IMPORTANT Windows platform limitation (verified empirically 2026-07-24): unlike POSIX,
+    # Windows' SetEnvironmentVariable treats assigning an env var to the empty string as
+    # DELETING it - `$env:RUSTC_WRAPPER = ''` and `Test-Path Env:RUSTC_WRAPPER` afterwards
+    # returns $false. So "caller explicitly opted out with RUSTC_WRAPPER=''" is *structurally
+    # indistinguishable* on Windows from "caller never touched it" - no amount of Test-Path
+    # cleverness here can recover that intent, which is exactly why that escape hatch (and
+    # `--config build.rustc-wrapper=''`, which never gets consulted because this function talks
+    # to the sccache server directly before cargo is ever invoked) failed to disengage the
+    # wrapper for an agent hitting a contended/crashing sccache server under concurrent load
+    # (os error 10054). Use the dedicated, reliably-non-empty opt-out instead: set
+    # $env:SCCACHE_DISABLE (any non-empty value) BEFORE calling Invoke-CargoWrapper/Initialize-CargoEnv.
+    if ($sccacheExe -and -not (Test-Truthy $env:SCCACHE_DISABLE)) {
         $env:RUSTC_WRAPPER = 'sccache'
     } else {
         if (Test-Path Env:RUSTC_WRAPPER) { Remove-Item Env:RUSTC_WRAPPER }
-        $env:SCCACHE_DISABLE = '1'
-        Write-Warning 'sccache not found; disabling RUSTC_WRAPPER for this session.'
+        if (-not (Test-Truthy $env:SCCACHE_DISABLE)) {
+            $env:SCCACHE_DISABLE = '1'
+            Write-Warning 'sccache not found; disabling RUSTC_WRAPPER for this session.'
+        }
     }
     if (-not $env:CARGO_INCREMENTAL) { $env:CARGO_INCREMENTAL = '0' }
 
