@@ -78,6 +78,9 @@ Describe '_WrapperHelpers exports' {
     It 'exports Resolve-Subcommand' {
         Get-Command Resolve-Subcommand -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
     }
+    It 'exports Split-WrapperInvocationResult' {
+        Get-Command Split-WrapperInvocationResult -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+    }
     It 'exports Show-WrapperHelp' {
         Get-Command Show-WrapperHelp -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
     }
@@ -89,6 +92,33 @@ Describe '_WrapperHelpers exports' {
     }
     It 'exports Write-LlmEvent' {
         Get-Command Write-LlmEvent -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Split-WrapperInvocationResult — preserve output, isolate scalar exit status
+# ---------------------------------------------------------------------------
+Describe 'Split-WrapperInvocationResult' {
+    It 'separates command output from the final exit code' {
+        $result = Split-WrapperInvocationResult -Result @('line one', 'line two', 0) -FallbackExitCode 9
+        @($result.Output) | Should -Be @('line one', 'line two')
+        $result.ExitCode | Should -Be 0
+    }
+
+    It 'returns only a scalar exit code for a code-only result' {
+        $result = Split-WrapperInvocationResult -Result @(7) -FallbackExitCode 9
+        @($result.Output).Count | Should -Be 0
+        $result.ExitCode | Should -Be 7
+    }
+
+    It 'uses the fallback when the command emits no success output' {
+        $result = Split-WrapperInvocationResult -Result @() -FallbackExitCode 3
+        @($result.Output).Count | Should -Be 0
+        $result.ExitCode | Should -Be 3
+    }
+
+    It 'rejects a non-scalar final status' {
+        { Split-WrapperInvocationResult -Result @('cargo output without status') } | Should -Throw '*scalar exit code*'
     }
 }
 

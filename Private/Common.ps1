@@ -292,6 +292,68 @@ function Strip-ArgsAfterDoubleDash {
     return (Split-CargoArgsAtDoubleDash -ArgsList $ArgsList).CargoArgs
 }
 
+function Get-ClippyFixArgs {
+    [CmdletBinding()]
+    param([string[]]$ArgsList)
+
+    $cargoArgs = Normalize-ArgsList (Strip-ArgsAfterDoubleDash $ArgsList)
+    $result = New-Object System.Collections.Generic.List[string]
+    $commandRemoved = $false
+    $optionsWithValues = @(
+        '-p', '--package', '--exclude', '-m', '--manifest-path',
+        '-F', '--features', '--target', '--target-dir', '--profile',
+        '-j', '--jobs', '--bin', '--example', '--test', '--bench',
+        '--config'
+    )
+    $standaloneOptions = @(
+        '--workspace', '--all', '--all-features', '--no-default-features',
+        '-r', '--release', '--locked', '--offline', '--frozen', '--keep-going',
+        '--ignore-rust-version', '--lib', '--bins', '--examples', '--tests',
+        '--benches', '--all-targets'
+    )
+    $valuePrefixes = @(
+        '--package=', '--exclude=', '--manifest-path=', '--features=',
+        '--target=', '--target-dir=', '--profile=', '--jobs=',
+        '--bin=', '--example=', '--test=', '--bench=', '--config='
+    )
+
+    for ($i = 0; $i -lt $cargoArgs.Count; $i++) {
+        $arg = [string]$cargoArgs[$i]
+
+        if (-not $commandRemoved -and @('build', 'check', 'test', 'bench', 'run') -contains $arg) {
+            $commandRemoved = $true
+            continue
+        }
+        if ($arg.StartsWith('+')) { continue }
+
+        if ($optionsWithValues -contains $arg) {
+            if ($i + 1 -lt $cargoArgs.Count) {
+                $result.Add($arg)
+                $i++
+                $result.Add([string]$cargoArgs[$i])
+            }
+            continue
+        }
+        if ($standaloneOptions -contains $arg) {
+            $result.Add($arg)
+            continue
+        }
+
+        $isValueOption = $false
+        foreach ($prefix in $valuePrefixes) {
+            if ($arg.StartsWith($prefix, [System.StringComparison]::Ordinal)) {
+                $isValueOption = $true
+                break
+            }
+        }
+        if ($isValueOption -or $arg -match '^-[pFjm].+') {
+            $result.Add($arg)
+        }
+    }
+
+    return $result.ToArray()
+}
+
 function Split-CargoArgsAtDoubleDash {
     param([string[]]$ArgsList)
 
