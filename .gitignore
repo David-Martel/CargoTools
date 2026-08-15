@@ -47,6 +47,10 @@ desktop.ini
 .serena/cache/
 .serena/memories/
 
+# In-repository agent worktrees.
+worktrees/
+testResults.xml
+
 # Help generation artifacts
 en-US/*.cab
 en-US/*.help.txt

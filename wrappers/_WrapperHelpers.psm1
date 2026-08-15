@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# _WrapperHelpers.psm1  -  CargoTools v0.9.0 shared wrapper logic
+# _WrapperHelpers.psm1 - CargoTools v0.9.0 shared wrapper logic
 # Exported by all cargo/maturin/rust-analyzer wrappers.
 # PS5.1 + Core compatible: no ??, no ?., no ternary ?:
 
@@ -37,7 +37,7 @@ function Get-CargoToolsVersion {
 }
 
 # --------------------------------------------------------------------------
-# Write-LlmEvent   -  emits JSON to stderr; no-op when $EmitLlm is false
+# Write-LlmEvent - emits JSON to stderr; no-op when $EmitLlm is false
 # --------------------------------------------------------------------------
 function Write-LlmEvent {
     param(
@@ -90,7 +90,42 @@ function Write-LlmEvent {
 }
 
 # --------------------------------------------------------------------------
-# Get-WrapperContext   -  parse wrapper flags out of raw arg list
+# Split-WrapperInvocationResult
+# --------------------------------------------------------------------------
+function Split-WrapperInvocationResult {
+    param(
+        [AllowEmptyCollection()] [object[]]$Result = @(),
+        [int]$FallbackExitCode = 0
+    )
+
+    if ($Result.Count -eq 0) {
+        return [pscustomobject]@{
+            Output   = @()
+            ExitCode = $FallbackExitCode
+        }
+    }
+
+    $exitCode = 0
+    $last = $Result[$Result.Count - 1]
+    if (-not [int]::TryParse([string]$last, [ref]$exitCode)) {
+        throw "Wrapper command did not return a scalar exit code as its final output."
+    }
+
+    $output = if ($Result.Count -gt 1) {
+        @($Result[0..($Result.Count - 2)])
+    }
+    else {
+        @()
+    }
+
+    return [pscustomobject]@{
+        Output   = @($output)
+        ExitCode = $exitCode
+    }
+}
+
+# --------------------------------------------------------------------------
+# Get-WrapperContext - parse wrapper flags out of raw arg list
 # Returns PSCustomObject with all flag booleans + PassThrough array
 # --------------------------------------------------------------------------
 function Get-WrapperContext {
@@ -142,7 +177,7 @@ function Get-WrapperContext {
 }
 
 # --------------------------------------------------------------------------
-# Resolve-Subcommand   -  returns first non-flag arg (likely cargo subcommand)
+# Resolve-Subcommand - returns first non-flag arg (likely cargo subcommand)
 # --------------------------------------------------------------------------
 function Resolve-Subcommand {
     param([string[]]$ArgList)
@@ -211,7 +246,7 @@ function Import-CargoToolsResilient {
                         -Detail "Module at '$path' is locked by OneDrive after $maxRetries attempts" `
                         -Recovery "Pause OneDrive sync or run: attrib -p `"$path`"" `
                         -EmitLlm:$EmitLlm
-                    Write-Host "[ERROR] OneDrive lock on $path  -  pause sync or run: attrib -p `"$path`"" -ForegroundColor Red
+                    Write-Host "[ERROR] OneDrive lock on $path - pause sync or run: attrib -p `"$path`"" -ForegroundColor Red
                 }
                 break
             }
@@ -281,7 +316,7 @@ function _Test-PathShadowed {
 }
 
 # --------------------------------------------------------------------------
-# _Check-StaleMutex   -  advisory only
+# _Check-StaleMutex - advisory only
 # --------------------------------------------------------------------------
 function _Check-StaleMutex {
     param([bool]$EmitLlm = $false)
@@ -290,10 +325,10 @@ function _Check-StaleMutex {
         foreach ($name in $mutexNames) {
             $h = [System.Threading.Mutex]::OpenExisting($name)
             if ($h) {
-                # If we can open it, it exists  -  can't reliably detect age from PS5
+                # If we can open it, it exists - can't reliably detect age from PS5
                 # Emit advisory only
                 Write-LlmEvent -Phase diagnostic -Level warn -Code STALE_MUTEX `
-                    -Detail "Mutex '$name' is held  -  possible concurrent CargoTools process" `
+                    -Detail "Mutex '$name' is held - possible concurrent CargoTools process" `
                     -EmitLlm:$EmitLlm
                 $h.Dispose()
             }
@@ -349,7 +384,7 @@ function Show-WrapperHelp {
     Write-Host '  CARGO_USE_LLD            Force lld-link linker' -ForegroundColor Gray
     Write-Host '  CARGO_USE_NEXTEST        Enable cargo-nextest' -ForegroundColor Gray
     Write-Host '  CARGO_AUTO_COPY          Copy build outputs to local target/' -ForegroundColor Gray
-    Write-Host '  CARGO_VERBOSITY          0-3 or llm  -  controls output detail' -ForegroundColor Gray
+    Write-Host '  CARGO_VERBOSITY          0-3 or llm - controls output detail' -ForegroundColor Gray
     Write-Host '  CARGO_QUICK_CHECK=1      Rewrite build to check (no binary)' -ForegroundColor Gray
     Write-Host '  CARGO_TIMINGS=1          HTML build timing report' -ForegroundColor Gray
     Write-Host '  CARGO_RELEASE_LTO=1      Thin LTO + codegen-units=1' -ForegroundColor Gray
@@ -373,7 +408,7 @@ function Show-WrapperVersion {
         $rustcVer = & rustup run stable rustc --version 2>&1
         if ($rustcVer) { Write-Host $rustcVer }
     } else {
-        Write-Host '[WARN] rustup not on PATH  -  cannot query cargo/rustc versions' -ForegroundColor Yellow
+        Write-Host '[WARN] rustup not on PATH - cannot query cargo/rustc versions' -ForegroundColor Yellow
     }
 }
 
@@ -462,8 +497,8 @@ function Invoke-WrapperDoctor {
     # 8. OneDrive lock on .psd1?
     $psd1 = Get-CargoToolsPsd1Path
     if ($psd1 -like '*\OneDrive\*') {
-        $checks['OneDrive .psd1'] = '[WARN] .psd1 is under OneDrive  -  may lock during sync'
-        $issues.Add('.psd1 under OneDrive path  -  risk of sync lock')
+        $checks['OneDrive .psd1'] = '[WARN] .psd1 is under OneDrive - may lock during sync'
+        $issues.Add('.psd1 under OneDrive path - risk of sync lock')
     } else {
         $checks['OneDrive .psd1'] = '[OK]'
     }
@@ -549,7 +584,7 @@ function Show-WrapperList {
         }
     }
     if (-not $found) {
-        Write-Host '  (no wrappers found  -  run tools\Install-Wrappers.ps1)' -ForegroundColor Yellow
+        Write-Host '  (no wrappers found - run tools\Install-Wrappers.ps1)' -ForegroundColor Yellow
     }
     Write-Host ''
 }
@@ -560,6 +595,7 @@ Export-ModuleMember -Function @(
     'Import-CargoToolsResilient',
     'Invoke-WrapperDoctor',
     'Resolve-Subcommand',
+    'Split-WrapperInvocationResult',
     'Show-WrapperHelp',
     'Show-WrapperList',
     'Show-WrapperVersion',
