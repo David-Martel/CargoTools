@@ -26,8 +26,10 @@ if (-not (Import-CargoToolsResilient -EmitLlm:$ctx.LlmMode)) { exit 2 }
 Write-LlmEvent -Phase start -Wrapper cargo-route -Args $passThroughArgs -EmitLlm:$ctx.LlmMode
 $start = Get-Date
 
-$code = Invoke-CargoRoute -ArgumentList $passThroughArgs
-if ($null -eq $code) { $code = $LASTEXITCODE }
+$invocationOutput = @(Invoke-CargoRoute -ArgumentList $passThroughArgs)
+$resolvedResult = Split-WrapperInvocationResult -Result $invocationOutput -FallbackExitCode $LASTEXITCODE
+@($resolvedResult.Output) | Write-Output
+$code = $resolvedResult.ExitCode
 
 Write-LlmEvent -Phase end -Wrapper cargo-route -ExitCode $code `
     -DurationMs ([int]((Get-Date) - $start).TotalMilliseconds) -EmitLlm:$ctx.LlmMode

@@ -482,17 +482,8 @@ Invoke-CargoWrapper --wrapper-help
             try {
                 # Auto-fix phase
                 if ($fix -and @('build','check','test','bench','run') -contains $primaryCmd) {
-                    $fixArgs = Normalize-ArgsList (Strip-ArgsAfterDoubleDash $passThrough.ToArray())
-                    $fixSansCmd = New-Object System.Collections.Generic.List[string]
-                    $removedCmd = $false
-                    foreach ($arg in $fixArgs) {
-                        if (-not $removedCmd -and -not $arg.StartsWith('-') -and -not $arg.StartsWith('+')) {
-                            $removedCmd = $true
-                            continue
-                        }
-                        $fixSansCmd.Add($arg)
-                    }
-                    $fixArgs = $fixSansCmd.ToArray()
+                    $fixArgs = Get-ClippyFixArgs $passThrough.ToArray()
+                    Write-CargoDebug ("Clippy auto-fix arguments: " + (Convert-ArgsToShell $fixArgs))
                     Write-CargoStatus -Phase "Preflight" -Message "Mandatory auto-fix (clippy --fix + fmt)..." -Type "Info"
                     & $rustupPath run $toolchain cargo clippy --fix --allow-dirty --allow-staged --allow-no-vcs @fixArgs
                     if ($LASTEXITCODE -ne 0) {
@@ -859,5 +850,3 @@ Invoke-CargoWrapper --wrapper-help
         if ($popLocation) { Pop-Location }
     }
 }
-
-

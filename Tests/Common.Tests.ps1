@@ -15,6 +15,7 @@ BeforeAll {
     $module = Get-Module CargoTools
     $script:ConvertArgsToShell = & $module { ${function:Convert-ArgsToShell} }
     $script:StripArgsAfterDoubleDash = & $module { ${function:Strip-ArgsAfterDoubleDash} }
+    $script:GetClippyFixArgs = & $module { ${function:Get-ClippyFixArgs} }
     $script:SplitCargoArgsAtDoubleDash = & $module { ${function:Split-CargoArgsAtDoubleDash} }
     $script:NormalizeArgsList = & $module { ${function:Normalize-ArgsList} }
     $script:GetPrimaryCommand = & $module { ${function:Get-PrimaryCommand} }
@@ -30,6 +31,42 @@ BeforeAll {
     $script:TestSccacheInfrastructureFailureFromLog = & $module { ${function:Test-SccacheInfrastructureFailureFromLog} }
     $script:AddNoSccacheCargoConfigArgs = & $module { ${function:Add-NoSccacheCargoConfigArgs} }
     $script:TestSccacheRustcWrapper = & $module { ${function:Test-SccacheRustcWrapper} }
+}
+
+Describe 'Get-ClippyFixArgs' {
+    It 'retains package scope while removing a test filter and harness arguments' {
+        $result = & $script:GetClippyFixArgs @(
+            'test', '-p', 'agent-bus-mcp', 'mcp::tests::known_tool', '--', '--exact'
+        )
+        $result | Should -Be @('-p', 'agent-bus-mcp')
+    }
+
+    It 'retains Clippy-compatible workspace, feature, target, and target-selection options' {
+        $result = & $script:GetClippyFixArgs @(
+            '+stable', 'test', '--workspace', '--exclude=slow-crate',
+            '--features', 'http,cli', '--target', 'x86_64-pc-windows-msvc',
+            '--test', 'integration', '--no-run'
+        )
+        $result | Should -Be @(
+            '--workspace', '--exclude=slow-crate', '--features', 'http,cli',
+            '--target', 'x86_64-pc-windows-msvc', '--test', 'integration'
+        )
+    }
+
+    It 'drops positional run arguments and unsupported cargo-test switches' {
+        $result = & $script:GetClippyFixArgs @('run', '--bin', 'worker', 'input.json', '--no-fail-fast')
+        $result | Should -Be @('--bin', 'worker')
+    }
+
+    It 'retains short manifest and release options' {
+        $result = & $script:GetClippyFixArgs @('test', '-m', 'C:\repo\Cargo.toml', '-r', '--workspace')
+        $result | Should -Be @('-m', 'C:\repo\Cargo.toml', '-r', '--workspace')
+    }
+
+    It 'retains compact short manifest, package, feature, and jobs options' {
+        $result = & $script:GetClippyFixArgs @('check', '-mC:\repo\Cargo.toml', '-pworker', '-Fhttp', '-j4')
+        $result | Should -Be @('-mC:\repo\Cargo.toml', '-pworker', '-Fhttp', '-j4')
+    }
 }
 
 Describe 'Test-SccacheRustcWrapper' {
