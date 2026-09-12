@@ -8,6 +8,10 @@ Sets sccache defaults, optional linkers, and runs preflight diagnostics before c
 Raw cargo arguments to pass through.
 .EXAMPLE
 Invoke-CargoWrapper --wrapper-help
+.EXAMPLE
+Invoke-CargoWrapper -ArgumentList @('--raw', 'test', 'filter', '--', '--nocapture')
+Use an explicit array when passing a Cargo argument separator. PowerShell consumes
+an unquoted -- token during advanced-function parameter binding.
 #>
     [CmdletBinding(DefaultParameterSetName = 'Args')]
     param(
@@ -24,6 +28,10 @@ Invoke-CargoWrapper --wrapper-help
         [string]$WorkingDirectory
     )
 
+    # Publish the wrapper outcome after diagnostics and queue cleanup, which may
+    # run native tools and overwrite LASTEXITCODE. Exceptions default to failure.
+    $wrapperExitCode = 1
+    try {
     $rawArgs = if ($PSCmdlet.ParameterSetName -eq 'Named') {
         $argsList = New-Object System.Collections.Generic.List[string]
         $argsList.Add($Command)
@@ -297,6 +305,12 @@ Invoke-CargoWrapper --wrapper-help
 
     for ($i = 0; $i -lt $rawArgs.Count; $i++) {
         $arg = $rawArgs[$i]
+        if ($arg -eq '--') {
+            # Everything after Cargo's separator belongs to the child command,
+            # including tokens that happen to match wrapper switches.
+            for (; $i -lt $rawArgs.Count; $i++) { $passThrough.Add($rawArgs[$i]) }
+            break
+        }
         switch ($arg) {
             '--wrapper-help' { $wrapperOnly = $true; continue }
             '--raw' { $rawMode = $true; continue }
@@ -341,12 +355,14 @@ Invoke-CargoWrapper --wrapper-help
         $rustupPath = Get-RustupPath
         if (-not (Test-Path $rustupPath)) {
             Write-Error "Error: rustup.exe not found at $rustupPath"
-            return 1
+            $wrapperExitCode = 1
+            return $wrapperExitCode
         }
         $toolchain = Resolve-CargoToolchain -RustupPath $rustupPath -RequestedToolchain $requestedToolchain
         $rawPassThrough = $passThrough.ToArray()
         & $rustupPath run $toolchain cargo @rawPassThrough
-        return $LASTEXITCODE
+        $wrapperExitCode = $LASTEXITCODE
+        return $wrapperExitCode
     }
 
     # Initialize verbosity from arguments
@@ -385,7 +401,7 @@ Invoke-CargoWrapper --wrapper-help
     }
 
     $preflightSplit = Split-PreflightArgs $passThrough.ToArray()
-    if (-not $preflightSplit) { return 1 }
+    if (-not $preflightSplit) { $wrapperExitCode = 1; return $wrapperExitCode }
 
     $passThrough = New-Object System.Collections.Generic.List[string]
     foreach ($arg in @($preflightSplit.Remaining)) {
@@ -397,7 +413,8 @@ Invoke-CargoWrapper --wrapper-help
     if ($wrapperOnly -or $helpRequested) {
         Show-WrapperHelp
         if ($wrapperOnly -and -not $helpRequested) {
-            return 0
+            $wrapperExitCode = 0
+            return $wrapperExitCode
         }
     }
 
@@ -405,7 +422,8 @@ Invoke-CargoWrapper --wrapper-help
     if ($WorkingDirectory) {
         if (-not (Test-Path $WorkingDirectory)) {
             Write-Error "Working directory not found: $WorkingDirectory"
-            return 1
+            $wrapperExitCode = 1
+            return $wrapperExitCode
         }
         Push-Location $WorkingDirectory
         $popLocation = $true
@@ -427,7 +445,8 @@ Invoke-CargoWrapper --wrapper-help
             $depCheck = Test-CargoMachineDependencies -Quiet
             if (-not $depCheck.Passed) {
                 Write-CargoStatus -Phase 'Environment' -Message ("Machine dependency check failed: " + ($depCheck.MissingMandatory -join ', ')) -Type 'Error'
-                return 1
+                $wrapperExitCode = 1
+                return $wrapperExitCode
             }
         }
         Write-CargoDebug "CARGO_TARGET_DIR: $env:CARGO_TARGET_DIR"
@@ -482,18 +501,22 @@ Invoke-CargoWrapper --wrapper-help
             try {
                 # Auto-fix phase
                 if ($fix -and @('build','check','test','bench','run') -contains $primaryCmd) {
-                    $fixArgs = Get-ClippyFixArgs $passThrough.ToArray()
+                    [string[]]$fixArgs = @(Get-ClippyFixArgs $passThrough.ToArray())
                     Write-CargoDebug ("Clippy auto-fix arguments: " + (Convert-ArgsToShell $fixArgs))
                     Write-CargoStatus -Phase "Preflight" -Message "Mandatory auto-fix (clippy --fix + fmt)..." -Type "Info"
                     & $rustupPath run $toolchain cargo clippy --fix --allow-dirty --allow-staged --allow-no-vcs @fixArgs
-                    if ($LASTEXITCODE -ne 0) {
+                    $autoFixExitCode = $LASTEXITCODE
+                    if ($autoFixExitCode -ne 0) {
                         Write-CargoStatus -Phase "Preflight" -Message "Auto-fix failed." -Type "Error"
-                        return $LASTEXITCODE
+                        $wrapperExitCode = $autoFixExitCode
+                        return $wrapperExitCode
                     }
                     & $rustupPath run $toolchain cargo fmt --all
-                    if ($LASTEXITCODE -ne 0) {
+                    $formatExitCode = $LASTEXITCODE
+                    if ($formatExitCode -ne 0) {
                         Write-CargoStatus -Phase "Preflight" -Message "cargo fmt failed." -Type "Error"
-                        return $LASTEXITCODE
+                        $wrapperExitCode = $formatExitCode
+                        return $wrapperExitCode
                     }
                 }
                 # Preflight phase
@@ -504,7 +527,8 @@ Invoke-CargoWrapper --wrapper-help
                         Write-CargoBuildPhase -Phase 'Preflight' -Failed
                         if ($preflight.Blocking) {
                             Write-CargoStatus -Phase 'Preflight' -Message "Failed with exit code $preflightExit (blocking)" -Type 'Error'
-                            return $preflightExit
+                            $wrapperExitCode = $preflightExit
+                            return $wrapperExitCode
                         }
                         Write-CargoStatus -Phase 'Preflight' -Message 'Failed (non-blocking, continuing)' -Type 'Warning'
                     } else {
@@ -517,7 +541,8 @@ Invoke-CargoWrapper --wrapper-help
                     $raExit = Invoke-RaDiagnosticsLocal -State $preflight -PassThroughArgs $passThrough.ToArray()
                     if ($raExit -ne 0 -and $preflight.Blocking) {
                         Write-CargoStatus -Phase 'Preflight' -Message 'rust-analyzer diagnostics failed (blocking)' -Type 'Error'
-                        return $raExit
+                        $wrapperExitCode = $raExit
+                        return $wrapperExitCode
                     }
                 }
 
@@ -684,7 +709,8 @@ Invoke-CargoWrapper --wrapper-help
                         # Show sccache stats on failure for debugging
                         Show-SccacheStatus -Compact
 
-                        return $cargoExitCode
+                        $wrapperExitCode = $cargoExitCode
+                        return $wrapperExitCode
                     }
                 }
 
@@ -696,7 +722,8 @@ Invoke-CargoWrapper --wrapper-help
 
                     if (-not (Ensure-CargoNextest -RustupPath $rustupPath -Toolchain $toolchain)) {
                         Write-CargoBuildPhase -Phase 'PostBuild' -Failed
-                        return 1
+                        $wrapperExitCode = 1
+                        return $wrapperExitCode
                     }
 
                     $scopeArgs = New-Object System.Collections.Generic.List[string]
@@ -771,9 +798,11 @@ Invoke-CargoWrapper --wrapper-help
                     }
                     Write-CargoStatus -Phase 'PostBuild' -Message "Running: cargo $($nextestArgs -join ' ')" -Type 'Info'
                     & $rustupPath run $toolchain cargo @nextestArgs
-                    if ($LASTEXITCODE -ne 0) {
+                    $nextestExitCode = $LASTEXITCODE
+                    if ($nextestExitCode -ne 0) {
                         Write-CargoBuildPhase -Phase 'PostBuild' -Failed
-                        return $LASTEXITCODE
+                        $wrapperExitCode = $nextestExitCode
+                        return $wrapperExitCode
                     }
 
                     if ($runPostBuildDoctest -and (Test-DoctestEligibleScope -RustupPath $rustupPath -Toolchain $toolchain -ScopeArgs $scopeArgs.ToArray())) {
@@ -791,9 +820,11 @@ Invoke-CargoWrapper --wrapper-help
                         }
                         Write-CargoStatus -Phase 'PostBuild' -Message "Running: cargo $($docArgs -join ' ')" -Type 'Info'
                         & $rustupPath run $toolchain cargo @docArgs
-                        if ($LASTEXITCODE -ne 0) {
+                        $doctestExitCode = $LASTEXITCODE
+                        if ($doctestExitCode -ne 0) {
                             Write-CargoBuildPhase -Phase 'PostBuild' -Failed
-                            return $LASTEXITCODE
+                            $wrapperExitCode = $doctestExitCode
+                            return $wrapperExitCode
                         }
                     } elseif ($runPostBuildDoctest) {
                         Write-CargoStatus -Phase 'PostBuild' -Message 'Skipping doctests because the selected scope has no doctestable library targets.' -Type 'Info'
@@ -822,7 +853,8 @@ Invoke-CargoWrapper --wrapper-help
                     }
                 }
 
-                return $cargoExitCode
+                $wrapperExitCode = $cargoExitCode
+                return $wrapperExitCode
             } catch {
                 Write-CargoBuildPhase -Phase 'Build' -Failed
                 Write-Error "cargo wrapper failed: $($_.Exception.Message)"
@@ -836,17 +868,25 @@ Invoke-CargoWrapper --wrapper-help
 
                 Write-Host 'Try: rustup update stable' -ForegroundColor Yellow
                 Write-Host 'Or run: cargo --version' -ForegroundColor Yellow
-                return 1
+                $wrapperExitCode = 1
+                return $wrapperExitCode
             }
         }
 
         Write-Error "Error: rustup.exe not found at $rustupPath"
         Write-Host 'Install Rust using rustup or add rustup.exe to PATH.' -ForegroundColor Yellow
-        return 1
+        $wrapperExitCode = 1
+        return $wrapperExitCode
     } finally {
         if ($queueTicket) {
             Exit-CargoBuildQueue -TicketPath $queueTicket.TicketPath
         }
         if ($popLocation) { Pop-Location }
+    }
+    } catch {
+        $wrapperExitCode = 1
+        throw
+    } finally {
+        $global:LASTEXITCODE = $wrapperExitCode
     }
 }
