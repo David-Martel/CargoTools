@@ -289,17 +289,17 @@ Raw rust-analyzer wrapper arguments.
                 $raPid = $raProcess.Id
                 $limitBytes = [long]$MemoryLimitMB * 1024 * 1024
                 $watchdogJob = Start-Job -ScriptBlock {
-                    param($pid, $limitBytes)
+                    param($watchdogProcessId, $limitBytes)
                     while ($true) {
                         Start-Sleep -Seconds 60
                         try {
-                            $proc = Get-Process -Id $pid -ErrorAction Stop
+                            $proc = Get-Process -Id $watchdogProcessId -ErrorAction Stop
                             if ($proc.WorkingSet64 -gt $limitBytes) {
                                 $memMB = [Math]::Round($proc.WorkingSet64 / 1MB, 0)
                                 $limitMB = [Math]::Round($limitBytes / 1MB, 0)
                                 # Write to stderr so the parent can see it
                                 [Console]::Error.WriteLine("rust-analyzer memory watchdog: ${memMB}MB exceeds limit of ${limitMB}MB. Killing process.")
-                                Stop-Process -Id $pid -Force
+                                Stop-Process -Id $watchdogProcessId -Force
                                 break
                             }
                         } catch [Microsoft.PowerShell.Commands.ProcessCommandException] {

@@ -127,3 +127,74 @@ Describe 'Installer data fallback' {
         { Read-CargoToolsDataFile -Path $script:DataPath } | Should -Throw
     }
 }
+
+Describe 'Rust analyzer watchdog job contract' {
+    BeforeAll {
+        $sourceAst = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $script:ModuleRoot 'Public/Invoke-RustAnalyzerWrapper.ps1'), [ref]$null, [ref]$null)
+        $jobCommand = $sourceAst.Find({ param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Start-Job'
+        }, $true)
+        $jobBlock = $jobCommand.CommandElements | Where-Object { $_ -is [Management.Automation.Language.ScriptBlockExpressionAst] } | Select-Object -First 1
+        $script:WatchdogBody = [scriptblock]::Create($jobBlock.ScriptBlock.Extent.Text.Trim().TrimStart('{').TrimEnd('}'))
+    }
+
+    It 'binds the fixture PID in a real job and stops only that process above the limit' {
+        $job = Start-Job -ScriptBlock $script:WatchdogBody -ArgumentList 424242, 1MB -InitializationScript {
+            [Console]::SetError([IO.StringWriter]::new())
+            Set-Item Function:global:Start-Sleep -Value { param($Seconds)
+                if ($Seconds -ne 60) { throw 'Wrong polling interval' }
+            }
+            Set-Item Function:global:Get-Process -Value { param($Id, $ErrorAction)
+                if ($ErrorAction -ne 'Stop') { throw 'Wrong lookup error behavior' }
+                [pscustomobject]@{ Id = $Id; WorkingSet64 = 2MB }
+            }
+            Set-Item Function:global:Stop-Process -Value { param($Id, [switch]$Force)
+                [pscustomobject]@{ StoppedId = $Id; Forced = $Force.IsPresent }
+            }
+        }
+        try {
+            $job | Wait-Job -Timeout 30 | Out-Null
+            $job.State | Should -Be 'Completed'
+            $result = @(Receive-Job -Job $job -ErrorAction Stop)
+            $result.Count | Should -Be 1
+            $result[0].StoppedId | Should -Be 424242
+            $result[0].Forced | Should -BeTrue
+        } finally {
+            $job | Stop-Job -ErrorAction SilentlyContinue
+            $job | Remove-Job -Force
+        }
+    }
+
+    It 'leaves a process below the limit running and exits when it disappears' {
+        $job = Start-Job -ScriptBlock $script:WatchdogBody -ArgumentList 424243, 2MB -InitializationScript {
+            $script:ProcessQueries = 0
+            Set-Item Function:global:Start-Sleep -Value { param($Seconds)
+                if ($Seconds -ne 60) { throw 'Wrong polling interval' }
+                if ($script:ProcessQueries -eq 1) { 'SECOND_POLL' }
+            }
+            Set-Item Function:global:Get-Process -Value { param($Id, $ErrorAction)
+                if ($ErrorAction -ne 'Stop') { throw 'Wrong lookup error behavior' }
+                $script:ProcessQueries++
+                if ($Id -ne 424243) { throw 'Wrong process queried' }
+                if ($script:ProcessQueries -gt 1) {
+                    throw [Microsoft.PowerShell.Commands.ProcessCommandException]::new('Fixture process exited')
+                }
+                [pscustomobject]@{ Id = $Id; WorkingSet64 = 1MB }
+            }
+            Set-Item Function:global:Stop-Process -Value { param($Id, [switch]$Force)
+                [pscustomobject]@{ UnexpectedStop = $Id; Forced = $Force.IsPresent }
+            }
+        }
+        try {
+            $job | Wait-Job -Timeout 30 | Out-Null
+            $job.State | Should -Be 'Completed'
+            $result = @(Receive-Job -Job $job -ErrorAction Stop)
+            $result.Count | Should -Be 1
+            $result[0] | Should -Be 'SECOND_POLL'
+        } finally {
+            $job | Stop-Job -ErrorAction SilentlyContinue
+            $job | Remove-Job -Force
+        }
+    }
+}
