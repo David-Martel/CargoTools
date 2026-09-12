@@ -198,6 +198,50 @@ exit /b !ERRORLEVEL!
     return 'installed'
 }
 
+function Read-CargoToolsDataFile {
+    <#
+    .SYNOPSIS
+    Reads a .psd1 data file, working identically with or without a PowerShell profile loaded.
+
+    .DESCRIPTION
+    Import-PowerShellDataFile is not reliably available in every invocation context on this
+    machine - reproduced 2026-07-24: `powershell -NoProfile -Command "Import-Module
+    Microsoft.PowerShell.Utility; Import-PowerShellDataFile ..."` still reports the cmdlet as
+    not recognized in this Windows PowerShell 5.1 (Desktop) session, and explicitly importing
+    the PowerShell 7 build of Microsoft.PowerShell.Utility by full path across editions doesn't
+    fix it either (its binary cmdlets aren't cross-edition compatible). Rather than depend on a
+    cmdlet whose availability varies by context, parse the .psd1 directly: a .psd1 is just a
+    PowerShell data-language literal (a restricted subset - no function calls, no variables,
+    only literals/hashtables/arrays), so CheckRestrictedLanguage + invoke gives the same
+    safety guarantee Import-PowerShellDataFile provides internally, without the cmdlet
+    dependency. Prefers the real cmdlet when it happens to be available (fast path, no
+    behavior change elsewhere); falls back to the manual parse otherwise. Works under both
+    -NoProfile and a normal profile-loaded session, and under both PS 5.1 Desktop and PS 7 Core.
+    #>
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $cmd = Get-Command Import-PowerShellDataFile -ErrorAction SilentlyContinue
+    if ($cmd) {
+        try {
+            return Import-PowerShellDataFile -Path $Path -ErrorAction Stop
+        } catch {
+            Write-Verbose "Import-PowerShellDataFile failed ($($_.Exception.Message)); falling back to manual parse."
+        }
+    }
+
+    $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+    $sb = [scriptblock]::Create($raw)
+    # Enforce the same "pure data, no code execution" guarantee Import-PowerShellDataFile
+    # gives - throws if the file contains anything beyond literals/hashtables/arrays.
+    $sb.CheckRestrictedLanguage([string[]]@(), [string[]]@(), $false)
+    return (& $sb)
+}
+
 function Remove-WrapperFiles {
     $removed = 0
     $allFiles = @()
@@ -327,7 +371,10 @@ if (-not $DryRun -and -not $Uninstall) {
             Import-Module $helperPath -Force -ErrorAction Stop
             $deployedVer = Get-CargoToolsVersion
             $manifestPath = Join-Path $moduleRoot 'CargoTools.psd1'
-            $manifestData = Import-PowerShellDataFile -Path $manifestPath -ErrorAction SilentlyContinue
+            $manifestData = $null
+            try { $manifestData = Read-CargoToolsDataFile -Path $manifestPath } catch {
+                Write-Verbose "Could not parse manifest: $($_.Exception.Message)"
+            }
             $expectedVer = if ($manifestData) { $manifestData.ModuleVersion } else { '?' }
             if ($deployedVer -eq $expectedVer) {
                 Write-Host "  [OK] _WrapperHelpers version $deployedVer matches manifest" -ForegroundColor Green

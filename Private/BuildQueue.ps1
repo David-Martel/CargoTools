@@ -181,7 +181,13 @@ function Enter-CargoBuildQueue {
             }
 
             Remove-StaleCargoQueueTickets -QueueRoot $queueRoot -StaleMinutes $settings.StaleMinutes | Out-Null
-            $entries = Get-CargoQueueEntries -QueueRoot $queueRoot
+            # @() is required here even though Get-CargoQueueEntries itself returns @(...):
+            # a single-element array is unwrapped back to a scalar PSCustomObject when it
+            # crosses the function-return pipeline boundary. Under Set-StrictMode -Version
+            # Latest, $entries.Count then throws PropertyNotFoundException (reproduced
+            # 2026-07-24 - crashes Invoke-CargoWrapper before cargo is ever invoked whenever
+            # exactly one ticket is queued, i.e. the common single-build case).
+            $entries = @(Get-CargoQueueEntries -QueueRoot $queueRoot)
             $positionIndex = -1
             for ($i = 0; $i -lt $entries.Count; $i++) {
                 if ($entries[$i].Path -eq $ticketPath) {

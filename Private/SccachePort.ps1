@@ -16,7 +16,7 @@ Set-StrictMode -Version Latest
 
     This function validates the desired port against the live exclusion table and, if it is reserved,
     returns the first free port in a safe band. On non-Windows hosts or if netsh is unavailable it
-    trusts the caller's value unchanged.
+    still checks whether the requested port can be used locally.
 
 .PARAMETER DesiredPort
     The configured/default sccache server port (string, e.g. from $env:SCCACHE_SERVER_PORT).
@@ -24,19 +24,66 @@ Set-StrictMode -Version Latest
 .OUTPUTS
     [string] a port guaranteed (best-effort) not to be in a Windows excluded range.
 #>
+function Get-SccachePortStateFile {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$CacheRoot)
+    return (Join-Path $CacheRoot 'sccache\resolved-port.txt')
+}
+
 function Resolve-FreeSccachePort {
+    <#
+    .DESCRIPTION
+    Beyond avoiding Windows-excluded port ranges (see below), this also converges every
+    session on this machine onto ONE shared sccache server instead of each independently
+    resolving its own port. Reproduced 2026-07-24: with no shared state, concurrent agent
+    sessions each ran their own scan-for-a-free-port logic, landed on DIFFERENT ports, and
+    each started its OWN sccache server - 4 simultaneous server processes observed, plus
+    "os error 10048" (two servers racing to bind the same port) and repeated client
+    "timed out" errors in T:\RustCache\sccache\error.log from clients whose server had
+    since been replaced/killed by another session's consolidation attempt.
+
+    Fix: persist the resolved port to $CacheRoot\sccache\resolved-port.txt. A new session
+    checks that file FIRST and reuses it if a healthy server already answers there -
+    skipping the scan entirely - so the whole machine converges on one server. Only when
+    there's no persisted port, or the persisted server isn't responding, does this fall
+    back to the original excluded-range scan, and it then persists whatever it finds for
+    the next session to reuse. This is deliberately best-effort/racy under concurrent
+    first-run (two sessions starting at the exact same instant could still pick different
+    ports once) - not worth a cross-process lock for a cache-warming optimization; it
+    self-corrects on the next call once the file exists.
+    #>
     [CmdletBinding()]
     [OutputType([string])]
     param(
         [Parameter(Mandatory)]
-        [string]$DesiredPort
+        [string]$DesiredPort,
+        [string]$CacheRoot
     )
 
-    $port = 0
-    if (-not [int]::TryParse($DesiredPort, [ref]$port) -or $port -le 0) { $port = 4400 }
+    # State is opt-in: direct callers without a cache root retain their requested
+    # port and do not read or change another workspace's machine-wide state.
+    $stateFile = if ($CacheRoot) { Get-SccachePortStateFile -CacheRoot $CacheRoot } else { $null }
+    if ($stateFile -and (Test-Path -LiteralPath $stateFile)) {
+        try {
+            $persisted = (Get-Content -LiteralPath $stateFile -Raw -ErrorAction Stop).Trim()
+            $persistedPort = 0
+            if ([int]::TryParse($persisted, [ref]$persistedPort) -and $persistedPort -gt 0 -and $persistedPort -le 65535) {
+                if (Test-SccachePortAvailable -Port $persistedPort) {
+                    return "$persistedPort"
+                }
+            }
+        } catch {
+            # Corrupt/unreadable state file - fall through to a fresh resolve below.
+            Write-Verbose "Could not reuse persisted sccache port: $($_.Exception.Message)"
+        }
+    }
 
-    # Parse the live Windows TCP exclusion table. Any failure (non-Windows, restricted shell) is
-    # non-fatal: trust the caller's port rather than block the build.
+    $port = 0
+    if (-not [int]::TryParse($DesiredPort, [ref]$port) -or $port -le 0 -or $port -gt 65535) { $port = 4400 }
+
+    # Parse the live Windows TCP exclusion table. If unavailable, a local bind
+    # check still detects occupied ports before selecting or persisting one.
     $ranges = @()
     try {
         $rows = & netsh int ipv4 show excludedportrange protocol=tcp 2>$null
@@ -46,25 +93,40 @@ function Resolve-FreeSccachePort {
             }
         }
     } catch {
-        return "$port"
+        Write-Verbose 'Windows port exclusions unavailable; checking local port availability.'
     }
-    if ($ranges.Count -eq 0) { return "$port" }
 
+    $resolved = $null
     if (
         -not (Test-SccachePortExcluded -Port $port -Ranges $ranges) -and
         (Test-SccachePortAvailable -Port $port)
     ) {
-        return "$port"
+        $resolved = "$port"
+    } else {
+        foreach ($candidate in 4200..4599) {
+            if (
+                -not (Test-SccachePortExcluded -Port $candidate -Ranges $ranges) -and
+                (Test-SccachePortAvailable -Port $candidate)
+            ) {
+                Write-Warning ("CargoTools: sccache port {0} is unavailable or in a Windows excluded port range; using free port {1} instead." -f $port, $candidate)
+                $resolved = "$candidate"
+                break
+            }
+        }
     }
 
-    foreach ($candidate in 4200..4599) {
-        if (
-            -not (Test-SccachePortExcluded -Port $candidate -Ranges $ranges) -and
-            (Test-SccachePortAvailable -Port $candidate)
-        ) {
-            Write-Warning ("CargoTools: sccache port {0} is unavailable or in a Windows excluded port range; using free port {1} instead." -f $port, $candidate)
-            return "$candidate"
+    if ($resolved) {
+        if ($stateFile) {
+            try {
+                $stateDir = Split-Path -Parent $stateFile
+                if (-not (Test-Path -LiteralPath $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
+                [System.IO.File]::WriteAllText($stateFile, $resolved, [System.Text.UTF8Encoding]::new($false))
+            } catch {
+                # Best-effort persistence; a failure here just means the next session re-scans.
+                Write-Verbose "Could not persist sccache port: $($_.Exception.Message)"
+            }
         }
+        return $resolved
     }
 
     # No free port found in the preferred band; surface the original and let sccache report the bind

@@ -1033,8 +1033,14 @@ function Initialize-CargoEnv {
     }
 
     $CacheRoot = Resolve-CacheRoot -CacheRoot $CacheRoot
+    $sccacheDisabled = Test-Truthy $env:SCCACHE_DISABLE
     $sccacheExe = Resolve-Sccache
-    if ($sccacheExe) {
+    if ($sccacheDisabled) {
+        # Opting out of sccache must not discard another compiler wrapper.
+        if (Test-SccacheRustcWrapper -Wrapper $env:RUSTC_WRAPPER) {
+            Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
+        }
+    } elseif ($sccacheExe) {
         $env:RUSTC_WRAPPER = 'sccache'
     } else {
         if (Test-Path Env:RUSTC_WRAPPER) { Remove-Item Env:RUSTC_WRAPPER }
@@ -1063,7 +1069,9 @@ function Initialize-CargoEnv {
     if (-not $env:SCCACHE_SERVER_PORT) { $env:SCCACHE_SERVER_PORT = '4293' }
     # Self-heal: a stale/inherited port (e.g. 14400) may now sit inside a Windows excluded range and
     # silently break `sccache --start-server` (os error 10013). Validate + fall back to a free port.
-    $env:SCCACHE_SERVER_PORT = Resolve-FreeSccachePort -DesiredPort $env:SCCACHE_SERVER_PORT
+    if (-not $sccacheDisabled) {
+        $env:SCCACHE_SERVER_PORT = Resolve-FreeSccachePort -DesiredPort $env:SCCACHE_SERVER_PORT -CacheRoot $CacheRoot
+    }
     if (-not $env:SCCACHE_LOG) { $env:SCCACHE_LOG = 'warn' }
     if (-not $env:SCCACHE_ERROR_LOG) { $env:SCCACHE_ERROR_LOG = (Join-Path $CacheRoot 'sccache\error.log') }
     if (-not $env:SCCACHE_NO_DAEMON) { $env:SCCACHE_NO_DAEMON = '0' }
@@ -1096,8 +1104,8 @@ function Initialize-CargoEnv {
     $activeLld = $env:CARGO_LLD_PATH
     if ($activeLld -and (Test-Path $activeLld) -and $activeLld -match 'lld-link') {
         $mc = Get-MachineConfig
-        $libPaths = @($mc['MsvcLibDir'], $mc['WindowsSdkUmLib'], $mc['WindowsSdkUcrtLib']) |
-            Where-Object { $_ -and (Test-Path $_) }
+        $libPaths = @(@($mc['MsvcLibDir'], $mc['WindowsSdkUmLib'], $mc['WindowsSdkUcrtLib']) |
+            Where-Object { $_ -and (Test-Path $_) })
         if ($libPaths.Count -gt 0) {
             $existingLib = $env:LIB
             foreach ($lp in $libPaths) {
@@ -1162,6 +1170,8 @@ function Start-SccacheServer {
         [int]$MaxMemoryMB = 2048,
         [switch]$Force
     )
+
+    if (Test-Truthy $env:SCCACHE_DISABLE) { return $false }
 
     # Acquire cross-process mutex to prevent concurrent startup races.
     # Multiple LLM agents may invoke cargo simultaneously - without this,

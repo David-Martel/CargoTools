@@ -336,12 +336,25 @@ function Initialize-CargoEnv {
 
     $CacheRoot = Resolve-CacheRoot -CacheRoot $CacheRoot
     $sccacheExe = Resolve-Sccache
-    if ($sccacheExe) {
+    # IMPORTANT Windows platform limitation (verified empirically 2026-07-24): unlike POSIX,
+    # Windows' SetEnvironmentVariable treats assigning an env var to the empty string as
+    # DELETING it - `$env:RUSTC_WRAPPER = ''` and `Test-Path Env:RUSTC_WRAPPER` afterwards
+    # returns $false. So "caller explicitly opted out with RUSTC_WRAPPER=''" is *structurally
+    # indistinguishable* on Windows from "caller never touched it" - no amount of Test-Path
+    # cleverness here can recover that intent, which is exactly why that escape hatch (and
+    # `--config build.rustc-wrapper=''`, which never gets consulted because this function talks
+    # to the sccache server directly before cargo is ever invoked) failed to disengage the
+    # wrapper for an agent hitting a contended/crashing sccache server under concurrent load
+    # (os error 10054). Use the dedicated, reliably-non-empty opt-out instead: set
+    # $env:SCCACHE_DISABLE (any non-empty value) BEFORE calling Invoke-CargoWrapper/Initialize-CargoEnv.
+    if ($sccacheExe -and -not (Test-Truthy $env:SCCACHE_DISABLE)) {
         $env:RUSTC_WRAPPER = 'sccache'
     } else {
         if (Test-Path Env:RUSTC_WRAPPER) { Remove-Item Env:RUSTC_WRAPPER }
-        $env:SCCACHE_DISABLE = '1'
-        Write-Warning 'sccache not found; disabling RUSTC_WRAPPER for this session.'
+        if (-not (Test-Truthy $env:SCCACHE_DISABLE)) {
+            $env:SCCACHE_DISABLE = '1'
+            Write-Warning 'sccache not found; disabling RUSTC_WRAPPER for this session.'
+        }
     }
     if (-not $env:CARGO_INCREMENTAL) { $env:CARGO_INCREMENTAL = '0' }
 
@@ -362,7 +375,7 @@ function Initialize-CargoEnv {
     if (-not $env:SCCACHE_SERVER_PORT) { $env:SCCACHE_SERVER_PORT = '4400' }
     # Self-heal: a stale/inherited port (e.g. 14400) may now sit inside a Windows excluded range and
     # silently break `sccache --start-server` (os error 10013). Validate + fall back to a free port.
-    $env:SCCACHE_SERVER_PORT = Resolve-FreeSccachePort -DesiredPort $env:SCCACHE_SERVER_PORT
+    $env:SCCACHE_SERVER_PORT = Resolve-FreeSccachePort -DesiredPort $env:SCCACHE_SERVER_PORT -CacheRoot $CacheRoot
     if (-not $env:SCCACHE_LOG) { $env:SCCACHE_LOG = 'warn' }
     if (-not $env:SCCACHE_ERROR_LOG) { $env:SCCACHE_ERROR_LOG = (Join-Path $CacheRoot 'sccache\error.log') }
     if (-not $env:SCCACHE_NO_DAEMON) { $env:SCCACHE_NO_DAEMON = '0' }
@@ -426,12 +439,24 @@ function Initialize-CargoEnv {
     if (-not $env:MAKEFLAGS) { $env:MAKEFLAGS = "-j$optimalJobs" }
     if (-not $env:CMAKE_BUILD_PARALLEL_LEVEL) { $env:CMAKE_BUILD_PARALLEL_LEVEL = "$optimalJobs" }
 
-    if (-not $env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR = Join-Path $CacheRoot 'cargo-target' }
+    # Deliberately NOT setting a CARGO_TARGET_DIR default here (unlike CARGO_HOME/RUSTUP_HOME
+    # below). ~/.cargo/config.toml already sets [build].target-dir = T:\RustCache\cargo-target
+    # as the machine-wide default at the correct precedence layer (config file). Setting the
+    # same path again via env var was redundant for that default case AND actively harmful:
+    # CARGO_TARGET_DIR (env) outranks a project's own .cargo/config.toml (cargo precedence is
+    # --target-dir flag > CARGO_TARGET_DIR env > config file), so it silently defeated any
+    # per-repo target-dir isolation a project added to stop colliding with same-named crates
+    # from other repos in the shared cache (reproduced 2026-07-24: a repo-local
+    # .cargo/config.toml `target-dir = "target"` in vigil-utils/rust/vigil_device_resources
+    # was ignored until this line was removed, because CARGO_TARGET_DIR was already set from
+    # here first). Only an explicit caller-set env var (or --target-dir) should win now; the
+    # implicit machine default lives in the global config file, where per-repo overrides can
+    # actually take effect.
     if (-not $env:CARGO_HOME) { $env:CARGO_HOME = Join-Path $CacheRoot 'cargo-home' }
     if (-not $env:RUSTUP_HOME) { $env:RUSTUP_HOME = Join-Path $CacheRoot 'rustup' }
 
     Ensure-Directory -Path $env:SCCACHE_DIR
-    Ensure-Directory -Path $env:CARGO_TARGET_DIR
+    if ($env:CARGO_TARGET_DIR) { Ensure-Directory -Path $env:CARGO_TARGET_DIR }
     Ensure-Directory -Path $env:CARGO_HOME
     Ensure-Directory -Path $env:RUSTUP_HOME
     if ($env:RUST_ANALYZER_CACHE_DIR) { Ensure-Directory -Path $env:RUST_ANALYZER_CACHE_DIR }
