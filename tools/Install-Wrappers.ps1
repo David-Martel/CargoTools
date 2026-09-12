@@ -234,11 +234,11 @@ function Read-CargoToolsDataFile {
         }
     }
 
-    $raw = Get-Content -Path $Path -Raw -ErrorAction Stop
+    $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
     $sb = [scriptblock]::Create($raw)
     # Enforce the same "pure data, no code execution" guarantee Import-PowerShellDataFile
     # gives - throws if the file contains anything beyond literals/hashtables/arrays.
-    $sb.CheckRestrictedLanguage([string[]]@(), [string[]]@(), $true)
+    $sb.CheckRestrictedLanguage([string[]]@(), [string[]]@(), $false)
     return (& $sb)
 }
 

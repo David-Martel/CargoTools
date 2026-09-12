@@ -1,4 +1,4 @@
-#Requires -Modules Pester
+﻿#Requires -Modules Pester
 <#
 .SYNOPSIS
 Pester tests for Invoke-RustAnalyzerWrapper and related functions.
@@ -12,7 +12,7 @@ BeforeAll {
     Import-Module (Join-Path $modulePath 'CargoTools.psd1') -Force
 
     # Test fixtures
-    $script:TestLockDir = Join-Path $env:TEMP 'CargoTools-Tests'
+    $script:TestLockDir = Join-Path $TestDrive 'rust-analyzer-fixtures'
     $script:TestLockFile = Join-Path $script:TestLockDir 'test-ra.lock'
 
     # Ensure test directory exists
@@ -31,12 +31,7 @@ BeforeAll {
     }
 }
 
-AfterAll {
-    # Cleanup test artifacts
-    if (Test-Path $script:TestLockDir) {
-        Remove-Item $script:TestLockDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
+# Pester owns TestDrive and removes only this run's fixture directory.
 
 Describe 'Resolve-RustAnalyzerPath' {
     Context 'When RUST_ANALYZER_PATH is set' {
@@ -104,23 +99,26 @@ Describe 'Resolve-RustAnalyzerPath' {
 }
 
 Describe 'Test-RustAnalyzerSingleton' {
+    BeforeEach {
+        # The unit diagnoses OS state; no live process needs to be terminated to
+        # arrange that state. Keep the actual diagnostic and memory logic intact.
+        Mock Get-Process -ModuleName CargoTools { @() } -ParameterFilter { $Name -eq 'rust-analyzer' }
+        Mock Get-Process -ModuleName CargoTools { $null } -ParameterFilter { $Id -eq 999999 }
+        Mock Resolve-CargoToolsFastCacheRoot -ModuleName CargoTools { $TestDrive }
+    }
     Context 'When no rust-analyzer is running' {
         It 'Should report NotRunning status' {
-            # Kill any running instances for clean test
-            Get-Process -Name 'rust-analyzer' -ErrorAction SilentlyContinue |
-                Stop-Process -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Milliseconds 500
-
             $result = Test-RustAnalyzerSingleton
             $result.Status | Should -Be 'NotRunning'
             $result.ProcessCount | Should -Be 0
+            Should -Invoke Get-Process -ModuleName CargoTools -Times 2 -Exactly -ParameterFilter { $Name -eq 'rust-analyzer' }
         }
     }
 
     Context 'Lock file validation' {
         It 'Should detect stale lock files' {
             # Create a lock file with non-existent PID
-            $lockFile = Join-Path $script:FastCacheRoot 'rust-analyzer\ra.lock'
+            $lockFile = Join-Path $TestDrive 'rust-analyzer\ra.lock'
             $lockDir = Split-Path $lockFile -Parent
             if (-not (Test-Path $lockDir)) {
                 New-Item -ItemType Directory -Path $lockDir -Force | Out-Null
@@ -134,6 +132,8 @@ Describe 'Test-RustAnalyzerSingleton' {
                 $result.LockFileExists | Should -Be $true
                 # Check that at least one issue contains "Stale"
                 ($result.Issues -join ' ') | Should -BeLike '*Stale*'
+                $result.LockFilePID | Should -Be 999999
+                Should -Invoke Get-Process -ModuleName CargoTools -Times 1 -Exactly -ParameterFilter { $Id -eq 999999 }
             } finally {
                 Remove-Item $lockFile -ErrorAction SilentlyContinue
             }
@@ -151,34 +151,19 @@ Describe 'Test-RustAnalyzerSingleton' {
 
 Describe 'Get-RustAnalyzerMemoryMB' {
     It 'Should return 0 when no rust-analyzer is running' {
-        Get-Process -Name 'rust-analyzer' -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Milliseconds 500
-
+        Mock Get-Process -ModuleName CargoTools { @() } -ParameterFilter { $Name -eq 'rust-analyzer' }
         $result = Get-RustAnalyzerMemoryMB
         $result | Should -Be 0
+        Should -Invoke Get-Process -ModuleName CargoTools -Times 1 -Exactly -ParameterFilter { $Name -eq 'rust-analyzer' }
     }
 
     It 'Should return positive value when rust-analyzer is running' {
-        $raPath = Resolve-RustAnalyzerPath
-        if (-not $raPath) {
-            Set-ItResult -Skipped -Because 'rust-analyzer not installed'
-            return
-        }
-
-        # Start rust-analyzer with --version to quickly get a process
-        $proc = Start-Process -FilePath $raPath -ArgumentList '--version' -PassThru -NoNewWindow
-        Start-Sleep -Milliseconds 200
-
-        try {
-            $running = Get-Process -Name 'rust-analyzer' -ErrorAction SilentlyContinue
-            if ($running) {
-                $result = Get-RustAnalyzerMemoryMB
-                $result | Should -BeGreaterThan 0
-            }
-        } finally {
-            $proc | Stop-Process -Force -ErrorAction SilentlyContinue
-        }
+        Mock Get-Process -ModuleName CargoTools {
+            @([pscustomobject]@{ Id = 101; WorkingSet64 = 128MB },
+              [pscustomobject]@{ Id = 102; WorkingSet64 = 256MB })
+        } -ParameterFilter { $Name -eq 'rust-analyzer' }
+        Get-RustAnalyzerMemoryMB | Should -Be 384
+        Should -Invoke Get-Process -ModuleName CargoTools -Times 1 -Exactly -ParameterFilter { $Name -eq 'rust-analyzer' }
     }
 }
 

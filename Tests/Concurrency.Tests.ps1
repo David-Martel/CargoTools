@@ -386,9 +386,22 @@ Describe 'ShellEscape C# accelerator' {
 Describe 'Concurrent sccache startup simulation' {
     It 'Start-SccacheServer is safe to call when already running' {
         $startSccache = & $module { ${function:Start-SccacheServer} }
-        # Calling it twice quickly should not throw
-        { & $startSccache } | Should -Not -Throw
-        { & $startSccache } | Should -Not -Throw
+        # Arrange OS state without restarting a live agent's cache server. The
+        # startup function and memory calculation remain the units under test.
+        Mock Resolve-UserScript -ModuleName CargoTools { $null }
+        Mock Resolve-Sccache -ModuleName CargoTools { 'fixture-sccache.exe' }
+        Mock Get-Process -ModuleName CargoTools {
+            [pscustomobject]@{ Id = 101; WorkingSet64 = 128MB }
+        } -ParameterFilter { $Name -eq 'sccache' }
+        $savedDisabled = $env:SCCACHE_DISABLE
+        try {
+            $env:SCCACHE_DISABLE = '0'
+            & $startSccache | Should -BeTrue
+            & $startSccache | Should -BeTrue
+            Should -Invoke Get-Process -ModuleName CargoTools -Times 4 -Exactly -ParameterFilter { $Name -eq 'sccache' }
+        } finally {
+            [Environment]::SetEnvironmentVariable('SCCACHE_DISABLE', $savedDisabled)
+        }
     }
 
     It 'Mutex protects sccache startup from cross-process races' {

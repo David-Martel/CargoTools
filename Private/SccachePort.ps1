@@ -16,7 +16,7 @@ Set-StrictMode -Version Latest
 
     This function validates the desired port against the live exclusion table and, if it is reserved,
     returns the first free port in a safe band. On non-Windows hosts or if netsh is unavailable it
-    trusts the caller's value unchanged.
+    still checks whether the requested port can be used locally.
 
 .PARAMETER DesiredPort
     The configured/default sccache server port (string, e.g. from $env:SCCACHE_SERVER_PORT).
@@ -27,9 +27,7 @@ Set-StrictMode -Version Latest
 function Get-SccachePortStateFile {
     [CmdletBinding()]
     [OutputType([string])]
-    param([string]$CacheRoot)
-
-    if (-not $CacheRoot) { $CacheRoot = 'T:\RustCache' }
+    param([Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$CacheRoot)
     return (Join-Path $CacheRoot 'sccache\resolved-port.txt')
 }
 
@@ -63,26 +61,29 @@ function Resolve-FreeSccachePort {
         [string]$CacheRoot
     )
 
-    $stateFile = Get-SccachePortStateFile -CacheRoot $CacheRoot
-    if (Test-Path -LiteralPath $stateFile) {
+    # State is opt-in: direct callers without a cache root retain their requested
+    # port and do not read or change another workspace's machine-wide state.
+    $stateFile = if ($CacheRoot) { Get-SccachePortStateFile -CacheRoot $CacheRoot } else { $null }
+    if ($stateFile -and (Test-Path -LiteralPath $stateFile)) {
         try {
             $persisted = (Get-Content -LiteralPath $stateFile -Raw -ErrorAction Stop).Trim()
             $persistedPort = 0
-            if ([int]::TryParse($persisted, [ref]$persistedPort) -and $persistedPort -gt 0) {
+            if ([int]::TryParse($persisted, [ref]$persistedPort) -and $persistedPort -gt 0 -and $persistedPort -le 65535) {
                 if (Test-SccachePortAvailable -Port $persistedPort) {
                     return "$persistedPort"
                 }
             }
         } catch {
             # Corrupt/unreadable state file - fall through to a fresh resolve below.
+            Write-Verbose "Could not reuse persisted sccache port: $($_.Exception.Message)"
         }
     }
 
     $port = 0
-    if (-not [int]::TryParse($DesiredPort, [ref]$port) -or $port -le 0) { $port = 4400 }
+    if (-not [int]::TryParse($DesiredPort, [ref]$port) -or $port -le 0 -or $port -gt 65535) { $port = 4400 }
 
-    # Parse the live Windows TCP exclusion table. Any failure (non-Windows, restricted shell) is
-    # non-fatal: trust the caller's port rather than block the build.
+    # Parse the live Windows TCP exclusion table. If unavailable, a local bind
+    # check still detects occupied ports before selecting or persisting one.
     $ranges = @()
     try {
         $rows = & netsh int ipv4 show excludedportrange protocol=tcp 2>$null
@@ -92,9 +93,8 @@ function Resolve-FreeSccachePort {
             }
         }
     } catch {
-        return "$port"
+        Write-Verbose 'Windows port exclusions unavailable; checking local port availability.'
     }
-    if ($ranges.Count -eq 0) { return "$port" }
 
     $resolved = $null
     if (
@@ -116,12 +116,15 @@ function Resolve-FreeSccachePort {
     }
 
     if ($resolved) {
-        try {
-            $stateDir = Split-Path -Parent $stateFile
-            if (-not (Test-Path -LiteralPath $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
-            [System.IO.File]::WriteAllText($stateFile, $resolved, [System.Text.UTF8Encoding]::new($false))
-        } catch {
-            # Best-effort persistence; a failure here just means the next session re-scans.
+        if ($stateFile) {
+            try {
+                $stateDir = Split-Path -Parent $stateFile
+                if (-not (Test-Path -LiteralPath $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
+                [System.IO.File]::WriteAllText($stateFile, $resolved, [System.Text.UTF8Encoding]::new($false))
+            } catch {
+                # Best-effort persistence; a failure here just means the next session re-scans.
+                Write-Verbose "Could not persist sccache port: $($_.Exception.Message)"
+            }
         }
         return $resolved
     }
