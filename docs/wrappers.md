@@ -123,17 +123,15 @@ When `--llm` (or `--json-output`, or `CARGO_VERBOSITY=llm`) is active, each wrap
 
 ### Annotated transcript
 
-A successful release build that survives an sccache hiccup:
+A successful release build:
 
 ```text
 $ cargo build --release --llm
 {"phase":"start","wrapper":"cargo","wrapper_version":"0.9.0","args":["build","--release"],"timestamp":"2026-04-28T18:42:01Z"}
 {"phase":"diagnostic","level":"info","code":"ROUTE_SELECTED","detail":"target=x86_64-pc-windows-msvc -> windows backend"}
-{"phase":"diagnostic","level":"warn","code":"SCCACHE_DEAD","detail":"sccache server unreachable on 127.0.0.1:4400","recovery":"Restarting server"}
-{"phase":"action","name":"restarted-sccache","detail":"sccache restarted; build will retry"}
    Compiling mycrate v0.1.0
     Finished `release` profile [optimized] in 8.42s
-{"phase":"end","exit_code":0,"duration_ms":8421,"wrapper":"cargo","actions_taken":["restarted-sccache"]}
+{"phase":"end","exit_code":0,"duration_ms":8421,"wrapper":"cargo","actions_taken":[]}
 ```
 
 ## Wrapper: cargo
@@ -184,11 +182,11 @@ Direct Windows/MSVC backend. This is the wrapper invoked by `cargo-route` when t
 2. Resolves the cache root (`T:\RustCache`, falling back to `$LOCALAPPDATA\RustCache`).
 3. Calls `Initialize-CargoEnv`: sets ~30 environment variables for sccache, MSVC, lld, ninja, etc.
 4. Resolves and applies the linker (external `lld-link`, bundled `rust-lld`, or default `link.exe`).
-5. Starts (or reuses) sccache via cross-process mutex.
+5. Starts (or reuses) the selected sccache endpoint via cross-process mutex, without consolidating other processes.
 6. Runs preflight (`check`/`clippy`/`fmt`/`deny`) if enabled.
 7. Rewrites `cargo test` -> `cargo nextest run` if cargo-nextest is installed.
 8. Executes `rustup run <toolchain> cargo @args`.
-9. On failure with sccache dead, restarts sccache and retries once.
+9. On failure, reports cache health and shared-log observations while preserving the original Cargo result. It does not automatically replay the command or force a cache restart.
 10. Auto-copies build outputs from shared `CARGO_TARGET_DIR` to local `./target/` if applicable.
 
 **Wrapper-only flags:**

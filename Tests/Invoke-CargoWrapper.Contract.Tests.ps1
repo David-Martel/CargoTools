@@ -143,6 +143,32 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
         $exitCode | Should -Be 0
     }
 
+    It 'does not retry a failed command because of <Observation>' -ForEach @(
+        @{ Observation = 'an absent selected cache'; Healthy = $false; Running = $false }
+        @{ Observation = 'an unhealthy selected cache'; Healthy = $false; Running = $true }
+        @{ Observation = 'unrelated shared cache log errors'; Healthy = $true; Running = $true }
+    ) {
+        $env:CARGOTOOLS_ENFORCE_QUALITY = '0'
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'test'
+        $env:CARGOTOOLS_CONTRACT_EXIT = '101'
+        $env:RUSTC_WRAPPER = 'sccache'
+        Mock Test-SccacheHealth -ModuleName CargoTools {
+            [pscustomobject]@{ Healthy = $Healthy; Running = $Running; Error = 'fixture cache observation' }
+        }.GetNewClosure()
+        Mock Test-SccacheInfrastructureFailureFromLog -ModuleName CargoTools { $true }
+
+        $result = @(Invoke-CargoWrapper -ArgumentList @('test'))
+        $exitCode = $global:LASTEXITCODE
+        $calls = @(Read-NativeCall)
+
+        $calls.Count | Should -Be 1
+        $calls[0] | Should -Be @('run', 'stable', 'cargo', 'test')
+        $result[-1] | Should -Be 101
+        $exitCode | Should -Be 101
+        Should -Invoke Start-SccacheServer -ModuleName CargoTools -Times 0 -Exactly -ParameterFilter { $Force }
+        Should -Invoke Exit-CargoBuildQueue -ModuleName CargoTools -Times 1 -Exactly
+    }
+
     It 'publishes wrapper-only success without launching native Cargo' {
         $global:LASTEXITCODE = 37
         $result = @(Invoke-CargoWrapper --wrapper-help 6>$null)

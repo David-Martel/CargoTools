@@ -1165,7 +1165,97 @@ function Get-SccacheMemoryMB {
     return 0
 }
 
+function Get-SccacheServerPort {
+    # Match sccache's native TCP default, not the wrapper's port allocation policy.
+    if (-not (Test-IsWindows) -and $env:SCCACHE_SERVER_UDS) {
+        throw 'CargoTools TCP health checks do not support SCCACHE_SERVER_UDS.'
+    }
+    $port = 4226
+    if ($env:SCCACHE_SERVER_PORT) {
+        if (-not [int]::TryParse($env:SCCACHE_SERVER_PORT, [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
+            throw 'SCCACHE_SERVER_PORT must be a TCP port between 1 and 65535.'
+        }
+    }
+    return $port
+}
+
+function Test-SccacheEndpointListening {
+    param([ValidateRange(1, 65535)][int]$Port)
+    # Passive inspection: unlike a TCP connection, this sends no protocol bytes.
+    foreach ($endpoint in [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()) {
+        if ($endpoint.Port -eq $Port -and
+            ($endpoint.Address.Equals([System.Net.IPAddress]::Loopback) -or
+             $endpoint.Address.Equals([System.Net.IPAddress]::Any))) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Invoke-SccacheControl {
+    param(
+        [ValidateSet('--show-stats', '--start-server', '--stop-server')]
+        [string]$Command,
+        [ValidateRange(1, 65535)][int]$Port,
+        # Matches the wrapper's default startup allowance; applies to CLI clients only.
+        [ValidateRange(1, 2147483647)][int]$TimeoutMilliseconds = 30000
+    )
+    $executable = Resolve-Sccache
+    if (-not $executable) { throw 'sccache binary not found in PATH' }
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $executable
+    $startInfo.Arguments = $Command # Fixed single token; compatible with PowerShell 5.1.
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.EnvironmentVariables['SCCACHE_SERVER_PORT'] = [string]$Port
+    # Unix-domain sockets take precedence over the TCP port in native sccache.
+    # An explicitly selected TCP endpoint must not control a different server.
+    $startInfo.EnvironmentVariables.Remove('SCCACHE_SERVER_UDS')
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $deadline = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        if (-not $process.Start()) { throw 'Unable to launch sccache control client.' }
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $remaining = [int][math]::Max(0, $TimeoutMilliseconds - $deadline.ElapsedMilliseconds)
+        if (-not $process.WaitForExit($remaining)) {
+            # Kill only this owned CLI client, never its server descendants.
+            $process.Kill()
+            throw "sccache $Command timed out after ${TimeoutMilliseconds}ms on port $Port."
+        }
+        # A spawned daemon must not keep this wrapper waiting on inherited pipes.
+        $remaining = [int][math]::Max(0, $TimeoutMilliseconds - $deadline.ElapsedMilliseconds)
+        if (-not [System.Threading.Tasks.Task]::WaitAll([System.Threading.Tasks.Task[]]@($stdout, $stderr), $remaining)) {
+            throw "sccache $Command output did not close on port $Port."
+        }
+        return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = $stdout.Result; Error = $stderr.Result }
+    } finally {
+        $process.Dispose()
+    }
+}
+
+function Get-SccacheStartupLock {
+    if (([System.Management.Automation.PSTypeName]'CargoTools.ProcessMutex').Type) {
+        return [CargoTools.ProcessMutex]::TryAcquire('CargoTools_SccacheStartup', 10000)
+    }
+    return $null
+}
+
 function Start-SccacheServer {
+    <#
+    .SYNOPSIS
+    Starts the selected endpoint without disturbing other builds.
+    .PARAMETER MaxMemoryMB
+    Advisory threshold for aggregate sccache process memory; never triggers a restart.
+    .PARAMETER Force
+    Explicitly requests a graceful restart of only the selected endpoint under the startup lock.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([bool])]
     param(
         [int]$MaxMemoryMB = 2048,
         [switch]$Force
@@ -1173,82 +1263,51 @@ function Start-SccacheServer {
 
     if (Test-Truthy $env:SCCACHE_DISABLE) { return $false }
 
-    # Acquire cross-process mutex to prevent concurrent startup races.
-    # Multiple LLM agents may invoke cargo simultaneously - without this,
-    # they can both see 0 sccache processes and race to start servers.
+    # Routine starts are idempotent. Process counts include compiler clients and
+    # unrelated endpoints, so they must never drive lifecycle operations.
     $mutexHandle = $null
     $useMutex = ([System.Management.Automation.PSTypeName]'CargoTools.ProcessMutex').Type
     if ($useMutex) {
-        $mutexHandle = [CargoTools.ProcessMutex]::TryAcquire('CargoTools_SccacheStartup', 10000)
+        $mutexHandle = Get-SccacheStartupLock
         if (-not $mutexHandle) {
-            Write-Verbose '[sccache] Another process is starting sccache, waiting...'
-            # Could not acquire in 10s - another process is handling startup.
-            # Check if sccache is already running (the other process may have started it).
-            $procs = @(Get-Process -Name 'sccache' -ErrorAction SilentlyContinue)
-            if ($procs.Count -gt 0) { return $true }
-            Write-Warning 'Timed out waiting for sccache startup mutex. Proceeding without lock.'
+            Write-Verbose '[sccache] Startup lock unavailable; checking only the selected endpoint.'
+            if ($Force) { return $false }
+            return (Test-SccacheHealth).Healthy
         }
     }
 
     try {
-        $manager = Resolve-UserScript 'sccache-manager.ps1'
-        if ($manager) {
-            & $manager -HealthCheck | Out-Null
-            if ($LASTEXITCODE -eq 0) { return $true }
-        }
-
-        $sccacheCmd = Resolve-Sccache
-        if (-not $sccacheCmd) {
-            Write-Warning 'sccache not found in PATH. Builds will continue without sccache.'
-            return $false
-        }
-
-        # Check for multiple instances or high memory usage
-        $procs = @(Get-Process -Name 'sccache' -ErrorAction SilentlyContinue)
-        if ($procs.Count -gt 1) {
-            Write-Verbose "[Memory] Multiple sccache instances ($($procs.Count)), consolidating..."
-            & $sccacheCmd --stop-server 2>$null | Out-Null
-            Start-Sleep -Milliseconds 500
-            $procs = @(Get-Process -Name 'sccache' -ErrorAction SilentlyContinue)
-            if ($procs.Count -gt 1 -and $Force) {
-                $procs | Stop-Process -Force -ErrorAction SilentlyContinue
-                Start-Sleep -Milliseconds 500
-                $procs = @()
-            } elseif ($procs.Count -gt 1) {
-                Write-Warning 'Multiple sccache instances detected; use -Force to consolidate.'
-            }
-        }
-
+        $port = Get-SccacheServerPort
         $memMB = Get-SccacheMemoryMB
-        if ($procs.Count -eq 1 -and $memMB -gt $MaxMemoryMB) {
-            Write-Verbose "[Memory] sccache using ${memMB}MB > ${MaxMemoryMB}MB limit, restarting..."
-            & $sccacheCmd --stop-server 2>$null | Out-Null
-            Start-Sleep -Milliseconds 500
-            $procs = @()
+        if ($memMB -gt $MaxMemoryMB) {
+            Write-Verbose "[Memory] Aggregate sccache memory ${memMB}MB exceeds advisory ${MaxMemoryMB}MB; shared processes retained."
         }
-
-        if ($procs.Count -eq 0 -or $Force) {
-            & $sccacheCmd --start-server 2>$null | Out-Null
-            Start-Sleep -Milliseconds 300
-            $healthOk = $true
-            try {
-                & $sccacheCmd --show-stats 2>$null | Out-Null
-                $healthOk = ($LASTEXITCODE -eq 0)
-            } catch {
-                $healthOk = $false
-            }
-            if (-not $healthOk) {
-                Write-Warning 'sccache started but health check failed.'
+        if ($Force) {
+            if (-not $mutexHandle) {
+                Write-Warning 'Explicit sccache restart requires the startup lock.'
                 return $false
             }
-
-            # Lower priority to prevent system overload
-            $newProc = Get-Process -Name 'sccache' -ErrorAction SilentlyContinue
-            if ($newProc) {
-                try { $newProc.PriorityClass = 'BelowNormal' } catch {}
-            }
+            if (-not $PSCmdlet.ShouldProcess("sccache TCP port $port", 'Gracefully restart')) { return $false }
+            Stop-SccacheServer -Port $port
+            if (Test-SccacheEndpointListening -Port $port) { return $false }
         }
-        return $true
+        $health = Test-SccacheHealth -Port $port
+        if ($health.Healthy) { return $true }
+        if (-not $health.EndpointChecked) {
+            Write-Warning "Unable to inspect sccache endpoint ${port}: $($health.Error)"
+            return $false
+        }
+        if ($health.Running) {
+            Write-Warning "sccache endpoint $port is unresponsive; leaving it intact: $($health.Error)"
+            return $false
+        }
+        if (-not $Force -and -not $PSCmdlet.ShouldProcess("sccache TCP port $port", 'Start')) { return $false }
+        $started = Invoke-SccacheControl -Command '--start-server' -Port $port
+        $health = Test-SccacheHealth -Port $port
+        if (-not $health.Healthy) {
+            Write-Warning "sccache endpoint $port failed startup (exit $($started.ExitCode)): $($health.Error)"
+        }
+        return $health.Healthy
     } catch {
         Write-Warning "Unable to start sccache server: $_"
     } finally {
@@ -1262,42 +1321,44 @@ function Start-SccacheServer {
 function Test-SccacheHealth {
     <#
     .SYNOPSIS
-    Verifies sccache server is responsive. Used for post-failure diagnosis.
+    Verifies the selected TCP endpoint is listening and responds to stats.
     .OUTPUTS
-    PSCustomObject with Healthy, Running, ProcessCount, MemoryMB, Port, Error fields.
+    ProcessCount and MemoryMB are aggregate diagnostics, not endpoint ownership.
     #>
     [CmdletBinding()]
-    param()
+    param([ValidateRange(0, 65535)][int]$Port = 0)
 
     $result = [PSCustomObject]@{
         Healthy      = $false
         Running      = $false
+        EndpointChecked = $false
         ProcessCount = 0
         MemoryMB     = 0
-        Port         = $env:SCCACHE_SERVER_PORT
+        Port         = $Port
         Error        = $null
     }
 
     $procs = @(Get-Process -Name 'sccache' -ErrorAction SilentlyContinue)
     $result.ProcessCount = $procs.Count
-    $result.Running = $procs.Count -gt 0
     $result.MemoryMB = Get-SccacheMemoryMB
 
-    if (-not $result.Running) {
-        $result.Error = 'sccache server not running'
-        return $result
-    }
-
     try {
-        $sccacheCmd = Resolve-Sccache
-        if ($sccacheCmd) {
-            & $sccacheCmd --show-stats 2>$null | Out-Null
-            $result.Healthy = ($LASTEXITCODE -eq 0)
-            if (-not $result.Healthy) {
-                $result.Error = "sccache --show-stats returned exit code $LASTEXITCODE"
-            }
-        } else {
-            $result.Error = 'sccache binary not found in PATH'
+        if ($Port -eq 0) { $Port = Get-SccacheServerPort }
+        $result.Port = $Port
+        $result.Running = Test-SccacheEndpointListening -Port $Port
+        $result.EndpointChecked = $true
+        if (-not $result.Running) {
+            $result.Error = "No sccache listener on port $Port"
+            return $result
+        }
+        $stats = Invoke-SccacheControl -Command '--show-stats' -Port $Port
+        # --show-stats can succeed with synthetic zero stats when no server exists.
+        $result.Running = Test-SccacheEndpointListening -Port $Port
+        $result.Healthy = $result.Running -and $stats.ExitCode -eq 0
+        if (-not $result.Running) {
+            $result.Error = "sccache listener disappeared from port $Port"
+        } elseif (-not $result.Healthy) {
+            $result.Error = "sccache --show-stats returned exit code $($stats.ExitCode): $($stats.Error)"
         }
     } catch {
         $result.Error = "sccache health check exception: $_"
@@ -1307,16 +1368,17 @@ function Test-SccacheHealth {
 }
 
 function Stop-SccacheServer {
-    $existing = Get-Process -Name 'sccache' -ErrorAction SilentlyContinue
-    if (-not $existing) { return }
-    $sccacheCmd = Resolve-Sccache
-    if ($sccacheCmd) {
-        & $sccacheCmd --stop-server 2>$null | Out-Null
-    }
-    Start-Sleep -Milliseconds 500
-    $remaining = Get-Process -Name 'sccache' -ErrorAction SilentlyContinue
-    if ($remaining) {
-        $remaining | Stop-Process -Force -ErrorAction SilentlyContinue
+    <# .SYNOPSIS
+    Requests graceful shutdown of only the selected endpoint; never kills processes.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([ValidateRange(0, 65535)][int]$Port = 0)
+    if ($Port -eq 0) { $Port = Get-SccacheServerPort }
+    if (-not (Test-SccacheEndpointListening -Port $Port)) { return }
+    if (-not $PSCmdlet.ShouldProcess("sccache TCP port $Port", 'Gracefully stop')) { return }
+    $stopped = Invoke-SccacheControl -Command '--stop-server' -Port $Port
+    if ($stopped.ExitCode -ne 0) {
+        throw "sccache shutdown failed on port $Port (exit $($stopped.ExitCode)): $($stopped.Error)"
     }
 }
 

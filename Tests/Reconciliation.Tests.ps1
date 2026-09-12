@@ -55,6 +55,46 @@ Describe 'Persisted sccache port scope' {
     }
 }
 
+Describe 'Occupied sccache port validation' {
+    BeforeEach {
+        $script:Listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $script:Listener.Start()
+        $script:OccupiedPort = $script:Listener.LocalEndpoint.Port
+        $script:OriginalPort = $env:SCCACHE_SERVER_PORT
+        # A successful stats exit is deliberately available to the old reader.
+        # No real sccache executable or server receives a request in these tests.
+        $stub = Join-Path $TestDrive 'synthetic-stats.ps1'
+        Set-Content -LiteralPath $stub -Value '$global:LASTEXITCODE = 0'
+        Mock Get-Command -ModuleName CargoTools {
+            [pscustomobject]@{ Source = $stub }
+        }.GetNewClosure() -ParameterFilter { $Name -eq 'sccache' }
+    }
+    AfterEach {
+        $script:Listener.Stop()
+        $env:SCCACHE_SERVER_PORT | Should -Be $script:OriginalPort
+    }
+
+    It 'requires actual selected-endpoint health when stats would report success' {
+        Mock Test-SccacheHealth -ModuleName CargoTools { [pscustomobject]@{ Healthy = $false } }
+        $actual = & $script:CargoModule { param($port) Test-SccachePortAvailable -Port $port } $script:OccupiedPort
+        $actual | Should -BeFalse
+        Should -Invoke Test-SccacheHealth -ModuleName CargoTools -Times 1 -Exactly -ParameterFilter { $Port -eq $script:OccupiedPort }
+    }
+
+    It 'reuses an occupied port only when its endpoint health succeeds' {
+        Mock Test-SccacheHealth -ModuleName CargoTools { [pscustomobject]@{ Healthy = $true } }
+        $actual = & $script:CargoModule { param($port) Test-SccachePortAvailable -Port $port } $script:OccupiedPort
+        $actual | Should -BeTrue
+        Should -Invoke Test-SccacheHealth -ModuleName CargoTools -Times 1 -Exactly -ParameterFilter { $Port -eq $script:OccupiedPort }
+    }
+
+    It 'rejects an occupied port when endpoint inspection throws' {
+        Mock Test-SccacheHealth -ModuleName CargoTools { throw 'fixture endpoint failure' }
+        $actual = & $script:CargoModule { param($port) Test-SccachePortAvailable -Port $port } $script:OccupiedPort
+        $actual | Should -BeFalse
+    }
+}
+
 Describe 'Active sccache opt-out' {
     BeforeEach {
         $script:SavedEnvironment = @{}
