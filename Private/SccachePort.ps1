@@ -139,7 +139,7 @@ function Test-SccachePortAvailable {
     [CmdletBinding()]
     [OutputType([bool])]
     param(
-        [Parameter(Mandatory)][int]$Port
+        [Parameter(Mandatory)][ValidateRange(1, 65535)][int]$Port
     )
 
     $listener = $null
@@ -148,21 +148,12 @@ function Test-SccachePortAvailable {
         $listener.Start()
         return $true
     } catch {
-        $oldPort = $env:SCCACHE_SERVER_PORT
         try {
-            $env:SCCACHE_SERVER_PORT = "$Port"
-            $sccache = Get-Command sccache -ErrorAction SilentlyContinue
-            if (-not $sccache) { return $false }
-            & $sccache.Source --show-stats *> $null
-            return $LASTEXITCODE -eq 0
+            # A failed bind is reusable only when this exact endpoint responds.
+            # Native stats can return synthetic success without a cache server.
+            return (Test-SccacheHealth -Port $Port).Healthy
         } catch {
             return $false
-        } finally {
-            if ($null -eq $oldPort) {
-                Remove-Item Env:SCCACHE_SERVER_PORT -ErrorAction SilentlyContinue
-            } else {
-                $env:SCCACHE_SERVER_PORT = $oldPort
-            }
         }
     } finally {
         if ($listener) { $listener.Stop() }

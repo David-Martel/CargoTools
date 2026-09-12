@@ -390,6 +390,10 @@ Describe 'Concurrent sccache startup simulation' {
         # startup function and memory calculation remain the units under test.
         Mock Resolve-UserScript -ModuleName CargoTools { $null }
         Mock Resolve-Sccache -ModuleName CargoTools { 'fixture-sccache.exe' }
+        Mock Get-SccacheServerPort -ModuleName CargoTools { 43123 }
+        Mock Test-SccacheEndpointListening -ModuleName CargoTools { $true } -ParameterFilter { $Port -eq 43123 }
+        Mock Invoke-SccacheControl -ModuleName CargoTools { [pscustomobject]@{ ExitCode = 0; Error = '' } } -ParameterFilter { $Command -eq '--show-stats' -and $Port -eq 43123 }
+        Mock Stop-Process -ModuleName CargoTools { throw 'Must not kill shared cache processes' }
         Mock Get-Process -ModuleName CargoTools {
             [pscustomobject]@{ Id = 101; WorkingSet64 = 128MB }
         } -ParameterFilter { $Name -eq 'sccache' }
@@ -398,7 +402,9 @@ Describe 'Concurrent sccache startup simulation' {
             $env:SCCACHE_DISABLE = '0'
             & $startSccache | Should -BeTrue
             & $startSccache | Should -BeTrue
-            Should -Invoke Get-Process -ModuleName CargoTools -Times 4 -Exactly -ParameterFilter { $Name -eq 'sccache' }
+            Should -Invoke Invoke-SccacheControl -ModuleName CargoTools -Times 2 -Exactly -ParameterFilter { $Command -eq '--show-stats' -and $Port -eq 43123 }
+            Should -Invoke Invoke-SccacheControl -ModuleName CargoTools -Times 0 -Exactly -ParameterFilter { $Command -ne '--show-stats' }
+            Should -Invoke Stop-Process -ModuleName CargoTools -Times 0 -Exactly
         } finally {
             [Environment]::SetEnvironmentVariable('SCCACHE_DISABLE', $savedDisabled)
         }

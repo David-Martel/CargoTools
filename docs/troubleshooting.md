@@ -76,36 +76,29 @@ Each section below documents one diagnostic code: what it means, when the wrappe
 
 ### SCCACHE_DEAD
 
-**Meaning:** sccache server is unreachable. Either it never started, crashed, or its IPC port (`4400` on this workstation by default) is wedged.
+**Meaning:** the selected sccache endpoint is unhealthy. The port comes from the current process's `SCCACHE_SERVER_PORT`, or the native default `4226` when unset. Other sccache processes may belong to different endpoints or be compiler clients.
 
 **When emitted:** During `Initialize-CargoEnv` (startup probe) or after a build failure when `Test-SccacheHealth` reports unhealthy + not running.
 
 **Auto-recovery:**
 
 - **At startup:** if sccache is configured (`RUSTC_WRAPPER=sccache`) but unreachable, the wrapper unsets `RUSTC_WRAPPER` for this invocation. Build proceeds without caching but does not fail.
-- **Mid-build:** if cargo fails and sccache is dead, the wrapper attempts `Start-SccacheServer -Force` and **retries the build once**. If sccache restart succeeds and the retry build succeeds, the wrapper exits 0. The action is reported as `restarted-sccache` in the JSON envelope.
+- **After a failed command:** the wrapper reports cache health and shared-log observations without restarting the server or replaying Cargo. Shared errors and a later health failure do not establish why this particular command failed; automatic replay could duplicate side effects or hide a real test failure.
 
-**Exit code:** Whatever cargo returns after the retry. Wrapper does not synthesise its own.
+**Exit code:** The original Cargo failure is preserved through diagnostics and queue cleanup.
 
 **Manual recovery:**
 
-1. Inspect health:
+1. Inspect the selected endpoint after importing CargoTools:
    ```powershell
-   PS C:\> sccache --show-stats
-   PS C:\> Get-Process sccache -ErrorAction SilentlyContinue
+   PS C:\> & (Get-Module CargoTools) { Test-SccacheHealth }
    ```
-2. Force a restart:
+   A successful `sccache --show-stats` exit alone is insufficient: some versions return synthetic zero statistics when no server exists. CargoTools requires a listener at the selected endpoint as well as a successful protocol response.
+2. After coordinating with other agents using that endpoint, explicitly request its graceful restart:
    ```powershell
-   PS C:\> sccache --stop-server
-   PS C:\> Stop-SccacheServer
    PS C:\> Start-SccacheServer -Force
    ```
-3. If the port is wedged, kill all sccache processes and clear stale state:
-   ```powershell
-   PS C:\> Get-Process sccache -ErrorAction SilentlyContinue | Stop-Process -Force
-   PS C:\> Remove-Item "$env:LOCALAPPDATA\sccache\sccache-*.lock" -ErrorAction SilentlyContinue
-   ```
-4. If sccache is uninstalled or broken, build with `--raw` (or `--no-wrapper`) to bypass it entirely.
+3. Inspect any remaining endpoint failure before explicitly rerunning the intended Cargo command. Do not kill all sccache processes or clear shared state while other builds are active. `--raw` skips CargoTools setup but does not erase repository Cargo configuration or inherited compiler-wrapper settings.
 
 ### RUSTUP_NOT_FOUND
 

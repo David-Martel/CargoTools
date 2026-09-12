@@ -102,39 +102,38 @@ Describe 'Format-CargoError' {
 }
 
 Describe 'Test-SccacheHealth' {
-    It 'Reports when sccache is healthy' {
-        $procs = @(Get-Process -Name 'sccache' -ErrorAction SilentlyContinue)
-        if ($procs.Count -eq 0) {
-            Set-ItResult -Skipped -Because 'sccache not running'
-            return
-        }
-        $result = & $script:TestSccacheHealth
-        $result.Running | Should -Be $true
-        $result.ProcessCount | Should -BeGreaterThan 0
+    BeforeEach {
+        Mock Get-SccacheServerPort -ModuleName CargoTools { 43123 }
+        Mock Get-Process -ModuleName CargoTools { [pscustomobject]@{ Id = 101; WorkingSet64 = 128MB } } -ParameterFilter { $Name -eq 'sccache' }
+        Mock Test-SccacheEndpointListening -ModuleName CargoTools { $true }
+        Mock Invoke-SccacheControl -ModuleName CargoTools { [pscustomobject]@{ ExitCode = 0; Error = '' } } -ParameterFilter { $Command -eq '--show-stats' -and $Port -eq 43123 }
     }
-    It 'Reports when sccache is not running' {
-        # Save state
-        $wasRunning = @(Get-Process -Name 'sccache' -ErrorAction SilentlyContinue).Count -gt 0
-        if ($wasRunning) {
-            Set-ItResult -Skipped -Because 'sccache is running; cannot safely stop for test'
-            return
-        }
+    It 'Reports when the selected endpoint is healthy' {
         $result = & $script:TestSccacheHealth
-        $result.Running | Should -Be $false
-        $result.Healthy | Should -Be $false
-        $result.Error | Should -Not -BeNullOrEmpty
+        $result.Running | Should -BeTrue
+        $result.Healthy | Should -BeTrue
+        $result.Port | Should -Be 43123
+        $result.ProcessCount | Should -Be 1
+        Should -Invoke Invoke-SccacheControl -ModuleName CargoTools -Times 1 -Exactly
     }
-    It 'Returns valid structure' {
+    It 'Reports no selected listener despite other sccache processes' {
+        Mock Test-SccacheEndpointListening -ModuleName CargoTools { $false }
         $result = & $script:TestSccacheHealth
-        $result | Should -Not -BeNull
-        $result.PSObject.Properties.Name | Should -Contain 'Healthy'
-        $result.PSObject.Properties.Name | Should -Contain 'Running'
-        $result.PSObject.Properties.Name | Should -Contain 'ProcessCount'
-        $result.PSObject.Properties.Name | Should -Contain 'MemoryMB'
-        $result.PSObject.Properties.Name | Should -Contain 'Port'
+        $result.Running | Should -BeFalse
+        $result.Healthy | Should -BeFalse
+        $result.ProcessCount | Should -Be 1
+        $result.Error | Should -Match 'No sccache listener'
+        Should -Invoke Invoke-SccacheControl -ModuleName CargoTools -Times 0 -Exactly
+    }
+    It 'Returns endpoint health and aggregate diagnostics' {
+        $result = & $script:TestSccacheHealth
+        $result.Healthy | Should -BeTrue
+        $result.Running | Should -BeTrue
+        $result.ProcessCount | Should -Be 1
+        $result.MemoryMB | Should -Be 128
+        $result.Port | Should -Be 43123
     }
 }
-
 Describe 'Sccache failure recovery in wrapper' {
     It 'Clears RUSTC_WRAPPER when sccache startup fails' {
         # Simulate: set RUSTC_WRAPPER but point sccache at a bad path
