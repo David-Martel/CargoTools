@@ -37,7 +37,8 @@ BeforeAll {
         'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER', 'CMAKE_ASM_COMPILER',
         'CMAKE_ASM_NASM_COMPILER', 'ASM_NASM',
         'CARGOTOOLS_PRESERVE_CMAKE_COMPILER',
-        'CC', 'CXX', 'PROCESSOR_ARCHITECTURE', 'PATH', 'CARGO_PREFLIGHT_MODE'
+        'CC', 'CXX', 'PROCESSOR_ARCHITECTURE', 'PATH', 'CARGO_PREFLIGHT_MODE',
+        'BINSTALL_DISABLE_TELEMETRY'
     )
     foreach ($name in $envVarsToSave) {
         if (Test-Path "Env:$name") {
@@ -57,7 +58,8 @@ AfterAll {
         'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER', 'CMAKE_ASM_COMPILER',
         'CMAKE_ASM_NASM_COMPILER', 'ASM_NASM',
         'CARGOTOOLS_PRESERVE_CMAKE_COMPILER',
-        'PROCESSOR_ARCHITECTURE', 'CARGO_PREFLIGHT_MODE'
+        'PROCESSOR_ARCHITECTURE', 'CARGO_PREFLIGHT_MODE',
+        'BINSTALL_DISABLE_TELEMETRY'
     )
     foreach ($name in $envVarsToClean) {
         if (-not $script:SavedEnv.ContainsKey($name)) {
@@ -80,7 +82,8 @@ Describe 'Initialize-CargoEnv' {
             'CMAKE_C_COMPILER', 'CMAKE_CXX_COMPILER', 'CMAKE_ASM_COMPILER',
             'CMAKE_ASM_NASM_COMPILER', 'ASM_NASM',
             'CARGOTOOLS_PRESERVE_CMAKE_COMPILER',
-            'PROCESSOR_ARCHITECTURE', 'CARGO_PREFLIGHT_MODE'
+            'PROCESSOR_ARCHITECTURE', 'CARGO_PREFLIGHT_MODE',
+            'BINSTALL_DISABLE_TELEMETRY'
         )
         foreach ($name in $clearVars) {
             Remove-Item "Env:$name" -ErrorAction SilentlyContinue
@@ -137,6 +140,11 @@ Describe 'Initialize-CargoEnv' {
             Initialize-CargoEnv
             $env:CMAKE_BUILD_PARALLEL_LEVEL | Should -Be '16'
         }
+        It 'Preserves existing BINSTALL_DISABLE_TELEMETRY when set to false' {
+            $env:BINSTALL_DISABLE_TELEMETRY = 'false'
+            Initialize-CargoEnv
+            $env:BINSTALL_DISABLE_TELEMETRY | Should -Be 'false'
+        }
     }
 
     Context 'Standard defaults' {
@@ -175,6 +183,14 @@ Describe 'Initialize-CargoEnv' {
 
             Initialize-CargoEnv
             $env:PROCESSOR_ARCHITECTURE | Should -Be 'AMD64'
+        }
+        It 'Sets BINSTALL_DISABLE_TELEMETRY to a clap-bool-parseable value (true/false, not 1/0)' {
+            # cargo-binstall's --disable-telemetry flag uses clap's bool value_parser,
+            # which only accepts the literal strings "true"/"false" via its env binding.
+            # A value of '1' fails arg parsing: error: invalid value '1' for '--disable-telemetry'
+            #   [possible values: true, false]
+            Initialize-CargoEnv
+            $env:BINSTALL_DISABLE_TELEMETRY | Should -BeIn @('true', 'false')
         }
     }
 
