@@ -4,7 +4,7 @@ BeforeAll {
     Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'CargoTools.psd1') -Force
     $script:savedEnvironment = @{}
     $script:controlledEnvironment = @(
-        'CARGO_RAW', 'CARGOTOOLS_ENFORCE_QUALITY', 'CARGOTOOLS_RUN_TESTS_AFTER_BUILD',
+        'CARGO_RAW', 'CARGOTOOLS_ENFORCE_QUALITY', 'CARGOTOOLS_AUTO_FIX', 'CARGOTOOLS_RUN_TESTS_AFTER_BUILD',
         'CARGOTOOLS_RUN_DOCTESTS_AFTER_BUILD', 'CARGO_USE_NEXTEST', 'CARGO_RA_PREFLIGHT',
         'CARGO_PREFLIGHT', 'CARGO_VERBOSITY', 'CARGO_LLM_DEBUG', 'CARGO_TIMINGS',
         'CARGO_QUICK_CHECK', 'CARGO_RELEASE_LTO', 'RUSTC_WRAPPER',
@@ -74,6 +74,11 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
         }
         Mock Get-RustupPath -ModuleName CargoTools { $env:CARGOTOOLS_CONTRACT_SHIM }
         Mock Resolve-CargoToolchain -ModuleName CargoTools { 'stable' }
+        # Default fixture: preflight itself reports disabled. Tests that exercise the
+        # mandatory-quality-gate autofix (which now correctly requires $preflight.Enabled,
+        # see the "preserves native autofix argv" tests below) override this locally to
+        # Enabled=$true, matching what the real Apply-PreflightEnvDefaults returns when
+        # CARGOTOOLS_ENFORCE_QUALITY=1 and no explicit --no-preflight is present.
         Mock Apply-PreflightEnvDefaults -ModuleName CargoTools { @{ Enabled = $false; RA = $false; Blocking = $true } }
         Mock Apply-PreflightIdeGuard -ModuleName CargoTools { param($State) $State }
         Mock Write-CargoStatus -ModuleName CargoTools {}
@@ -92,11 +97,61 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
         @{ Label = 'one'; CargoArgs = @('test', '--all-targets'); Expected = @('--all-targets') }
         @{ Label = 'several'; CargoArgs = @('test', '--workspace', '-p', 'worker', 'filter', '--', '--exact'); Expected = @('--workspace', '-p', 'worker') }
     ) {
+        # CARGOTOOLS_AUTO_FIX is the explicit opt-in that makes autofix run without --fix
+        # on the command line (see "does not mutate by default" below for the converse).
+        $env:CARGOTOOLS_AUTO_FIX = '1'
+        Mock Apply-PreflightEnvDefaults -ModuleName CargoTools { @{ Enabled = $true; RA = $false; Blocking = $true } }
         $result = @(Invoke-CargoWrapper -ArgumentList $CargoArgs)
         $exitCode = $global:LASTEXITCODE
         $calls = @(Read-NativeCall)
         $calls.Count | Should -Be 1
         $calls[0] | Should -Be (@('run', 'stable', 'cargo', 'clippy', '--fix', '--allow-dirty', '--allow-staged', '--allow-no-vcs') + $Expected)
+        $result[-1] | Should -Be 37
+        $exitCode | Should -Be 37
+    }
+
+    It 'does not mutate source by default: CARGOTOOLS_ENFORCE_QUALITY=1 alone never triggers clippy --fix' {
+        # Regression test: a build wrapper must never rewrite source (clippy --fix + fmt)
+        # unless explicitly asked. The mandatory quality gate (CARGOTOOLS_ENFORCE_QUALITY,
+        # default on) may still run its own read-only check/clippy/fmt --check reporting,
+        # but that alone must never imply the mutating --fix pass. Defaults stay convenient
+        # (the quality gate still runs) without mutating anything.
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        Remove-Item Env:CARGOTOOLS_AUTO_FIX -ErrorAction SilentlyContinue
+        Mock Apply-PreflightEnvDefaults -ModuleName CargoTools { @{ Enabled = $true; RA = $false; Blocking = $true } }
+        $result = @(Invoke-CargoWrapper -ArgumentList @('test'))
+        $exitCode = $global:LASTEXITCODE
+        $calls = @(Read-NativeCall)
+        $calls.Count | Should -Be 1
+        $calls[0] | Should -Be @('run', 'stable', 'cargo', 'test')
+        $result[-1] | Should -Be 0
+        $exitCode | Should -Be 0
+    }
+
+    It 'does not run autofix when --no-preflight is passed, even with CARGOTOOLS_AUTO_FIX=1' {
+        # Regression test: --no-preflight is the caller's explicit opt-out and must suppress
+        # the env-driven autofix opt-in, not just skip the preflight report.
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        $env:CARGOTOOLS_AUTO_FIX = '1'
+        Mock Apply-PreflightEnvDefaults -ModuleName CargoTools { @{ Enabled = $false; RA = $false; Blocking = $true } }
+        $result = @(Invoke-CargoWrapper -ArgumentList @('test', '--no-preflight'))
+        $exitCode = $global:LASTEXITCODE
+        $calls = @(Read-NativeCall)
+        $calls.Count | Should -Be 1
+        $calls[0] | Should -Be @('run', 'stable', 'cargo', 'test')
+        $result[-1] | Should -Be 0
+        $exitCode | Should -Be 0
+    }
+
+    It 'still honors an explicit --fix even with --no-preflight' {
+        # Explicit --fix is the caller's opt-in and must still apply.
+        Remove-Item Env:CARGOTOOLS_AUTO_FIX -ErrorAction SilentlyContinue
+        Mock Apply-PreflightEnvDefaults -ModuleName CargoTools { @{ Enabled = $false; RA = $false; Blocking = $true } }
+        $result = @(Invoke-CargoWrapper -ArgumentList @('test', '--no-preflight', '--fix'))
+        $exitCode = $global:LASTEXITCODE
+        $calls = @(Read-NativeCall)
+        $calls.Count | Should -Be 1
+        $calls[0] | Should -Be @('run', 'stable', 'cargo', 'clippy', '--fix', '--allow-dirty', '--allow-staged', '--allow-no-vcs')
         $result[-1] | Should -Be 37
         $exitCode | Should -Be 37
     }
@@ -122,6 +177,8 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
     It 'preserves <Phase> failures through diagnostics and queue cleanup' -ForEach @(
         @{ Phase = 'clippy' }, @{ Phase = 'fmt' }, @{ Phase = 'test' }
     ) {
+        $env:CARGOTOOLS_AUTO_FIX = '1'
+        Mock Apply-PreflightEnvDefaults -ModuleName CargoTools { @{ Enabled = $true; RA = $false; Blocking = $true } }
         $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = $Phase
         Mock Write-CargoStatus -ModuleName CargoTools {
             & $env:CARGOTOOLS_CONTRACT_PWSH -NoProfile -Command 'exit 0'
@@ -134,6 +191,8 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
     }
 
     It 'publishes successful completion after successful cleanup' {
+        $env:CARGOTOOLS_AUTO_FIX = '1'
+        Mock Apply-PreflightEnvDefaults -ModuleName CargoTools { @{ Enabled = $true; RA = $false; Blocking = $true } }
         $global:LASTEXITCODE = 37
         $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
         $result = @(Invoke-CargoWrapper -ArgumentList @('test'))

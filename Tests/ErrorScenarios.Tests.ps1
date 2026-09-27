@@ -265,6 +265,51 @@ Describe 'Preflight with invalid modes' {
     }
 }
 
+Describe 'Preflight --no-preflight overrides mandatory quality gate' {
+    # Regression coverage: a build wrapper must never rewrite source (clippy --fix + fmt)
+    # unless explicitly asked. CARGOTOOLS_ENFORCE_QUALITY defaults to on and used to force
+    # preflight (and therefore the mutating auto-fix) back on even when the caller passed
+    # --no-preflight explicitly. --no-preflight must win.
+    It 'Split-PreflightArgs marks --no-preflight as an explicit disable' {
+        $result = & $script:SplitPreflightArgs -InputArgs @('build', '--no-preflight')
+        $result.State.Enabled | Should -Be $false
+        $result.State.ExplicitDisable | Should -Be $true
+    }
+
+    It 'Split-PreflightArgs does not mark a plain build as an explicit disable' {
+        $result = & $script:SplitPreflightArgs -InputArgs @('build')
+        $result.State.ExplicitDisable | Should -Be $false
+    }
+
+    It 'Apply-PreflightEnvDefaults honors an explicit --no-preflight over CARGOTOOLS_ENFORCE_QUALITY=1' {
+        $savedQuality = $env:CARGOTOOLS_ENFORCE_QUALITY
+        $env:CARGOTOOLS_ENFORCE_QUALITY = '1'
+        try {
+            $state = & $script:SplitPreflightArgs -InputArgs @('build', '--no-preflight')
+            $result = & $script:ApplyPreflightEnvDefaults $state.State
+            $result.Enabled | Should -Be $false
+        } finally {
+            if ($savedQuality) { $env:CARGOTOOLS_ENFORCE_QUALITY = $savedQuality }
+            else { Remove-Item Env:CARGOTOOLS_ENFORCE_QUALITY -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'Apply-PreflightEnvDefaults still enables preflight by default when CARGOTOOLS_ENFORCE_QUALITY=1 and --no-preflight is absent' {
+        # Defaults stay convenient: the mandatory quality gate still applies when the
+        # caller did not explicitly opt out.
+        $savedQuality = $env:CARGOTOOLS_ENFORCE_QUALITY
+        $env:CARGOTOOLS_ENFORCE_QUALITY = '1'
+        try {
+            $state = & $script:SplitPreflightArgs -InputArgs @('build')
+            $result = & $script:ApplyPreflightEnvDefaults $state.State
+            $result.Enabled | Should -Be $true
+        } finally {
+            if ($savedQuality) { $env:CARGOTOOLS_ENFORCE_QUALITY = $savedQuality }
+            else { Remove-Item Env:CARGOTOOLS_ENFORCE_QUALITY -ErrorAction SilentlyContinue }
+        }
+    }
+}
+
 Describe 'Preflight deny mode' {
     BeforeAll {
         $script:DenyModule = Get-Module CargoTools

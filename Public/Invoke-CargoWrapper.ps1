@@ -94,7 +94,7 @@ an unquoted -- token during advanced-function parameter binding.
         Write-Host '  --preflight                     Run pre-build diagnostics (cargo check)' -ForegroundColor Gray
         Write-Host '  --preflight-mode <check|clippy|fmt|deny|all>' -ForegroundColor Gray
         Write-Host '  --preflight-ra                  Run rust-analyzer diagnostics before build' -ForegroundColor Gray
-        Write-Host '  --fix                           Automatically apply clippy/fmt fixes during preflight' -ForegroundColor Gray
+        Write-Host '  --fix                           Apply clippy --fix + fmt (mutates source; opt-in only)' -ForegroundColor Gray
         Write-Host '  --preflight-strict              Treat warnings as errors for clippy' -ForegroundColor Gray
         Write-Host '  --preflight-blocking            Fail build on preflight errors' -ForegroundColor Gray
         Write-Host '  --preflight-nonblocking         Continue build on preflight errors' -ForegroundColor Gray
@@ -121,7 +121,8 @@ an unquoted -- token during advanced-function parameter binding.
         Write-Host '  CARGO_RELEASE_LTO=1             Enable thin LTO for release builds' -ForegroundColor Gray
         Write-Host '  CARGO_VERBOSITY=llm             Enable JSON output for LLM agents' -ForegroundColor Gray
         Write-Host '  CARGOTOOLS_RUST_TOOLCHAIN=<toolchain>  Pin wrapper rustup toolchain' -ForegroundColor Gray
-        Write-Host '  CARGOTOOLS_ENFORCE_QUALITY=1|0  Toggle mandatory quality gate (default: 1)' -ForegroundColor Gray
+        Write-Host '  CARGOTOOLS_ENFORCE_QUALITY=1|0  Toggle mandatory quality gate (default: 1; read-only check/clippy/fmt --check, never mutates source)' -ForegroundColor Gray
+        Write-Host '  CARGOTOOLS_AUTO_FIX=1|0         Opt in to automatic clippy --fix + fmt (mutates source; default: 0)' -ForegroundColor Gray
         Write-Host '  CARGOTOOLS_RUN_TESTS_AFTER_BUILD=1|0  Toggle mandatory post-build nextest (default: 1)' -ForegroundColor Gray
         Write-Host '  CARGOTOOLS_RUN_DOCTESTS_AFTER_BUILD=1|0 Toggle mandatory post-build doctests (default: 1)' -ForegroundColor Gray
         Write-Host '  RA_DIAGNOSTICS_FLAGS="--disable-build-scripts --disable-proc-macros"' -ForegroundColor Gray
@@ -391,9 +392,9 @@ an unquoted -- token during advanced-function parameter binding.
     } else {
         $enforceQuality
     }
-    if ($enforceQuality) {
-        $fix = $true
-    }
+    # NOTE: $fix (clippy --fix + fmt, which mutates source) is NOT derived from
+    # $enforceQuality. It stays opt-in — see the CARGOTOOLS_AUTO_FIX / --fix decision
+    # below, once $preflight.Enabled is known.
 
     $primaryCmd = Get-PrimaryCommand $passThrough.ToArray()
     if ($primaryCmd -eq 'test') {
@@ -409,6 +410,21 @@ an unquoted -- token during advanced-function parameter binding.
     }
     $preflight = Apply-PreflightEnvDefaults $preflightSplit.State
     $preflight = Apply-PreflightIdeGuard $preflight
+
+    # Auto-fix (clippy --fix + fmt) mutates the source tree, so it is opt-in only — never
+    # implied by the mandatory quality gate ($enforceQuality / $preflight.Enabled) alone.
+    # A plain `cargo build` with no flags and no CARGOTOOLS_AUTO_FIX must never rewrite
+    # source. $preflight itself still runs its own read-only check/clippy/fmt --check
+    # reporting by default; that is a report, not a mutation.
+    # Two ways to opt in:
+    #   1. Explicit --fix on the command line (captured in $fix by the arg-parse loop above)
+    #      always applies, even with --no-preflight.
+    #   2. CARGOTOOLS_AUTO_FIX=1 (machine-level convenience default) applies unless the
+    #      caller explicitly opted out of preflight (--no-preflight, IDE-guard, etc.).
+    $autoFixRequested = if ($env:CARGOTOOLS_AUTO_FIX) { Test-Truthy $env:CARGOTOOLS_AUTO_FIX } else { $false }
+    if ($autoFixRequested -and $preflight.Enabled) {
+        $fix = $true
+    }
 
     if ($wrapperOnly -or $helpRequested) {
         Show-WrapperHelp

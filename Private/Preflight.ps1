@@ -8,6 +8,7 @@ function New-PreflightState {
         IdeGuard = $true
         Force = $false
         JsonOutput = $false
+        ExplicitDisable = $false
     }
 }
 
@@ -35,7 +36,7 @@ function Split-PreflightArgs {
             '--preflight-nonblocking' { $state.Blocking = $false; $state.Enabled = $true; continue }
             '--preflight-force' { $state.Force = $true; $state.Enabled = $true; continue }
             '--llm-output' { $state.JsonOutput = $true; continue }
-            '--no-preflight' { $state.Enabled = $false; continue }
+            '--no-preflight' { $state.Enabled = $false; $state.ExplicitDisable = $true; continue }
             default { $remaining.Add($arg); continue }
         }
     }
@@ -49,7 +50,7 @@ function Split-PreflightArgs {
 function Apply-PreflightEnvDefaults {
     param([hashtable]$State)
 
-    if (-not $State.Enabled -and $env:CARGO_PREFLIGHT -and $env:CARGO_PREFLIGHT -ne '0') {
+    if (-not $State.Enabled -and -not $State.ExplicitDisable -and $env:CARGO_PREFLIGHT -and $env:CARGO_PREFLIGHT -ne '0') {
         $State.Enabled = $true
     }
     if (-not $State.Mode -and $env:CARGO_PREFLIGHT_MODE) {
@@ -75,12 +76,15 @@ function Apply-PreflightEnvDefaults {
 
     # Mandatory quality-gate defaults (enabled unless explicitly disabled).
     # This enforces: autofix + lint + format checks before compilation.
+    # An explicit --no-preflight on the command line is a hard opt-out: it must win over
+    # this default, otherwise a build wrapper silently mutates source (clippy --fix + fmt)
+    # even when the caller asked it not to run preflight at all.
     $enforceQuality = if ($env:CARGOTOOLS_ENFORCE_QUALITY) {
         Test-Truthy $env:CARGOTOOLS_ENFORCE_QUALITY
     } else {
         $true
     }
-    if ($enforceQuality) {
+    if ($enforceQuality -and -not $State.ExplicitDisable) {
         $State.Enabled = $true
         if ($env:CARGOTOOLS_PREFLIGHT_MODE) {
             $State.Mode = $env:CARGOTOOLS_PREFLIGHT_MODE
