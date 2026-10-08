@@ -265,6 +265,93 @@ Describe 'Preflight with invalid modes' {
     }
 }
 
+Describe 'Preflight --no-preflight overrides mandatory quality gate' {
+    BeforeEach {
+        $script:OptOutEnv = @{}
+        foreach ($name in @(
+            'CARGOTOOLS_ENFORCE_QUALITY', 'CARGOTOOLS_PREFLIGHT_MODE', 'CARGOTOOLS_RA_PREFLIGHT',
+            'CARGO_PREFLIGHT', 'CARGO_PREFLIGHT_MODE', 'CARGO_PREFLIGHT_STRICT',
+            'CARGO_RA_PREFLIGHT', 'CARGO_PREFLIGHT_IDE_GUARD', 'CARGO_PREFLIGHT_FORCE',
+            'CARGO_PREFLIGHT_BLOCKING'
+        )) {
+            $script:OptOutEnv[$name] = [Environment]::GetEnvironmentVariable($name)
+            [Environment]::SetEnvironmentVariable($name, $null)
+        }
+    }
+    AfterEach {
+        foreach ($name in $script:OptOutEnv.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $script:OptOutEnv[$name])
+        }
+    }
+    # Regression coverage: a build wrapper must never rewrite source (clippy --fix + fmt)
+    # unless explicitly asked. CARGOTOOLS_ENFORCE_QUALITY defaults to on and used to force
+    # preflight (and therefore the mutating auto-fix) back on even when the caller passed
+    # --no-preflight explicitly. --no-preflight must win.
+    It 'Split-PreflightArgs marks --no-preflight as an explicit disable' {
+        $result = & $script:SplitPreflightArgs -InputArgs @('build', '--no-preflight')
+        $result.State.Enabled | Should -Be $false
+        $result.State.ExplicitDisable | Should -Be $true
+    }
+
+    It 'Split-PreflightArgs does not mark a plain build as an explicit disable' {
+        $result = & $script:SplitPreflightArgs -InputArgs @('build')
+        $result.State.ExplicitDisable | Should -Be $false
+    }
+
+    It 'Apply-PreflightEnvDefaults honors an explicit --no-preflight over CARGOTOOLS_ENFORCE_QUALITY=1' {
+        $savedQuality = $env:CARGOTOOLS_ENFORCE_QUALITY
+        $env:CARGOTOOLS_ENFORCE_QUALITY = '1'
+        try {
+            $state = & $script:SplitPreflightArgs -InputArgs @('build', '--no-preflight')
+            $result = & $script:ApplyPreflightEnvDefaults $state.State
+            $result.Enabled | Should -Be $false
+        } finally {
+            if ($savedQuality) { $env:CARGOTOOLS_ENFORCE_QUALITY = $savedQuality }
+            else { Remove-Item Env:CARGOTOOLS_ENFORCE_QUALITY -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'Apply-PreflightEnvDefaults still enables preflight by default when CARGOTOOLS_ENFORCE_QUALITY=1 and --no-preflight is absent' {
+        # Defaults stay convenient: the mandatory quality gate still applies when the
+        # caller did not explicitly opt out.
+        $savedQuality = $env:CARGOTOOLS_ENFORCE_QUALITY
+        $env:CARGOTOOLS_ENFORCE_QUALITY = '1'
+        try {
+            $state = & $script:SplitPreflightArgs -InputArgs @('build')
+            $result = & $script:ApplyPreflightEnvDefaults $state.State
+            $result.Enabled | Should -Be $true
+        } finally {
+            if ($savedQuality) { $env:CARGOTOOLS_ENFORCE_QUALITY = $savedQuality }
+            else { Remove-Item Env:CARGOTOOLS_ENFORCE_QUALITY -ErrorAction SilentlyContinue }
+        }
+    }
+    It 'hard-disables regular and RA preflight with <Label>' -ForEach @(
+        @{ Label = 'environment RA'; CargoArgs = @('build', '--no-preflight') }
+        @{ Label = 'disable before enable'; CargoArgs = @('build', '--no-preflight', '--preflight', '--preflight-ra') }
+        @{ Label = 'disable after enable'; CargoArgs = @('build', '--preflight', '--preflight-ra', '--no-preflight') }
+        @{ Label = 'later force and mode'; CargoArgs = @('build', '--no-preflight', '--preflight-force', '--preflight-mode', 'all') }
+    ) {
+        $env:CARGOTOOLS_ENFORCE_QUALITY = '1'
+        $env:CARGOTOOLS_RA_PREFLIGHT = '1'
+        $env:CARGO_PREFLIGHT = '1'
+        $env:CARGO_RA_PREFLIGHT = '1'
+        $state = & $script:SplitPreflightArgs -InputArgs $CargoArgs
+        $result = & $script:ApplyPreflightEnvDefaults $state.State
+        $result.ExplicitDisable | Should -Be $true
+        $result.Enabled | Should -Be $false
+        $result.RA | Should -Be $false
+    }
+
+    It 'still permits RA preflight when the caller has not disabled preflight' {
+        $env:CARGOTOOLS_ENFORCE_QUALITY = '1'
+        $env:CARGOTOOLS_RA_PREFLIGHT = '1'
+        $state = & $script:SplitPreflightArgs -InputArgs @('build')
+        $result = & $script:ApplyPreflightEnvDefaults $state.State
+        $result.Enabled | Should -Be $true
+        $result.RA | Should -Be $true
+    }
+}
+
 Describe 'Preflight deny mode' {
     BeforeAll {
         $script:DenyModule = Get-Module CargoTools

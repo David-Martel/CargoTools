@@ -211,6 +211,7 @@ Describe 'Bounded native sccache control client' {
         $script:ProcessFixture | Add-Member ScriptMethod Kill { $this.Killed++; $this.KillArgumentCount = $args.Count }
         $script:ProcessFixture | Add-Member ScriptMethod Dispose { $this.Disposed = $true }
         Mock New-Object -ModuleName CargoTools { $script:ProcessFixture } -ParameterFilter { $TypeName -eq 'System.Diagnostics.Process' }
+        Mock New-Object -ModuleName CargoTools { [System.Diagnostics.ProcessStartInfo]::new() } -ParameterFilter { $TypeName -eq 'System.Diagnostics.ProcessStartInfo' }
         $beforePort = $env:SCCACHE_SERVER_PORT
         $beforeSocket = $env:SCCACHE_SERVER_UDS
         try {
@@ -246,6 +247,7 @@ Describe 'Bounded native sccache control client' {
         $script:ProcessFixture | Add-Member ScriptMethod Kill { $this.Killed++ }
         $script:ProcessFixture | Add-Member ScriptMethod Dispose { $this.Disposed = $true }
         Mock New-Object -ModuleName CargoTools { $script:ProcessFixture } -ParameterFilter { $TypeName -eq 'System.Diagnostics.Process' }
+        Mock New-Object -ModuleName CargoTools { [System.Diagnostics.ProcessStartInfo]::new() } -ParameterFilter { $TypeName -eq 'System.Diagnostics.ProcessStartInfo' }
         { & $script:Control -Command '--start-server' -Port 43123 -TimeoutMilliseconds 450 } | Should -Throw '*output did not close*'
         $script:ProcessFixture.Killed | Should -Be 0
         $script:ProcessFixture.Disposed | Should -BeTrue
