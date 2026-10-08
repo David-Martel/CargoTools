@@ -79,7 +79,7 @@ an unquoted -- token during advanced-function parameter binding.
         Write-Host '  - project-local target/ output by default' -ForegroundColor Gray
         Write-Host '  - queued top-level cargo execution to prevent contention storms' -ForegroundColor Gray
         Write-Host '  - sccache port: dynamically selected outside Windows excluded ranges' -ForegroundColor Gray
-        Write-Host '  - quality gate enabled (autofix + clippy + fmt, blocking)' -ForegroundColor Gray
+        Write-Host '  - quality gate enabled (check + clippy + fmt --check, blocking; fixes opt-in)' -ForegroundColor Gray
         Write-Host '  - post-build validation enabled (nextest + doctests)' -ForegroundColor Gray
         Write-Host ''
         Write-Host 'Passthrough mode:' -ForegroundColor Yellow
@@ -94,6 +94,7 @@ an unquoted -- token during advanced-function parameter binding.
         Write-Host '  --preflight                     Run pre-build diagnostics (cargo check)' -ForegroundColor Gray
         Write-Host '  --preflight-mode <check|clippy|fmt|deny|all>' -ForegroundColor Gray
         Write-Host '  --preflight-ra                  Run rust-analyzer diagnostics before build' -ForegroundColor Gray
+        Write-Host '  --no-preflight                  Disable all preflight and RA diagnostics; wins over env and other preflight flags (explicit --fix still applies)' -ForegroundColor Gray
         Write-Host '  --fix                           Apply clippy --fix + fmt (mutates source; opt-in only)' -ForegroundColor Gray
         Write-Host '  --preflight-strict              Treat warnings as errors for clippy' -ForegroundColor Gray
         Write-Host '  --preflight-blocking            Fail build on preflight errors' -ForegroundColor Gray
@@ -519,7 +520,7 @@ an unquoted -- token during advanced-function parameter binding.
                 if ($fix -and @('build','check','test','bench','run') -contains $primaryCmd) {
                     [string[]]$fixArgs = @(Get-ClippyFixArgs $passThrough.ToArray())
                     Write-CargoDebug ("Clippy auto-fix arguments: " + (Convert-ArgsToShell $fixArgs))
-                    Write-CargoStatus -Phase "Preflight" -Message "Mandatory auto-fix (clippy --fix + fmt)..." -Type "Info"
+                    Write-CargoStatus -Phase "Preflight" -Message "Requested auto-fix (clippy --fix + fmt)..." -Type "Info"
                     & $rustupPath run $toolchain cargo clippy --fix --allow-dirty --allow-staged --allow-no-vcs @fixArgs
                     $autoFixExitCode = $LASTEXITCODE
                     if ($autoFixExitCode -ne 0) {

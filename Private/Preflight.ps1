@@ -50,7 +50,7 @@ function Split-PreflightArgs {
 function Apply-PreflightEnvDefaults {
     param([hashtable]$State)
 
-    if (-not $State.Enabled -and -not $State.ExplicitDisable -and $env:CARGO_PREFLIGHT -and $env:CARGO_PREFLIGHT -ne '0') {
+    if (-not $State.Enabled -and -not $State['ExplicitDisable'] -and $env:CARGO_PREFLIGHT -and $env:CARGO_PREFLIGHT -ne '0') {
         $State.Enabled = $true
     }
     if (-not $State.Mode -and $env:CARGO_PREFLIGHT_MODE) {
@@ -75,16 +75,15 @@ function Apply-PreflightEnvDefaults {
     if (-not $State.Mode) { $State.Mode = 'check' }
 
     # Mandatory quality-gate defaults (enabled unless explicitly disabled).
-    # This enforces: autofix + lint + format checks before compilation.
-    # An explicit --no-preflight on the command line is a hard opt-out: it must win over
-    # this default, otherwise a build wrapper silently mutates source (clippy --fix + fmt)
-    # even when the caller asked it not to run preflight at all.
+    # This enforces read-only check, lint, and formatting checks before compilation.
+    # Explicit --no-preflight must win over machine defaults and later enable flags.
+    # Source changes require a separate --fix or CARGOTOOLS_AUTO_FIX opt-in.
     $enforceQuality = if ($env:CARGOTOOLS_ENFORCE_QUALITY) {
         Test-Truthy $env:CARGOTOOLS_ENFORCE_QUALITY
     } else {
         $true
     }
-    if ($enforceQuality -and -not $State.ExplicitDisable) {
+    if ($enforceQuality -and -not $State['ExplicitDisable']) {
         $State.Enabled = $true
         if ($env:CARGOTOOLS_PREFLIGHT_MODE) {
             $State.Mode = $env:CARGOTOOLS_PREFLIGHT_MODE
@@ -100,6 +99,12 @@ function Apply-PreflightEnvDefaults {
         } else {
             $State.RA = $false
         }
+    }
+
+    # --no-preflight is a hard opt-out, including RA diagnostics and later flags.
+    if ($State['ExplicitDisable']) {
+        $State.Enabled = $false
+        $State.RA = $false
     }
 
     return $State

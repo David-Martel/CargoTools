@@ -7,6 +7,9 @@ BeforeAll {
         'CARGO_RAW', 'CARGOTOOLS_ENFORCE_QUALITY', 'CARGOTOOLS_AUTO_FIX', 'CARGOTOOLS_RUN_TESTS_AFTER_BUILD',
         'CARGOTOOLS_RUN_DOCTESTS_AFTER_BUILD', 'CARGO_USE_NEXTEST', 'CARGO_RA_PREFLIGHT',
         'CARGO_PREFLIGHT', 'CARGO_VERBOSITY', 'CARGO_LLM_DEBUG', 'CARGO_TIMINGS',
+        'CARGOTOOLS_RA_PREFLIGHT', 'CARGOTOOLS_PREFLIGHT_MODE', 'CARGO_PREFLIGHT_FORCE',
+        'CARGO_PREFLIGHT_MODE', 'CARGO_PREFLIGHT_STRICT', 'CARGO_PREFLIGHT_BLOCKING',
+        'CARGO_PREFLIGHT_IDE_GUARD',
         'CARGO_QUICK_CHECK', 'CARGO_RELEASE_LTO', 'RUSTC_WRAPPER',
         'CARGOTOOLS_CONTRACT_LOG', 'CARGOTOOLS_CONTRACT_FIXTURE',
         'CARGOTOOLS_CONTRACT_SHIM', 'CARGOTOOLS_CONTRACT_PWSH',
@@ -294,5 +297,76 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
         Mock Exit-CargoBuildQueue -ModuleName CargoTools { throw 'fixture cleanup failure' }
         { Invoke-CargoWrapper -ArgumentList @('test') } | Should -Throw '*fixture cleanup failure*'
         $global:LASTEXITCODE | Should -Be 1
+    }
+}
+
+Describe 'Invoke-CargoWrapper real preflight opt-out contract' {
+    BeforeEach {
+        foreach ($name in $script:controlledEnvironment | Where-Object { $_ -notlike 'CARGOTOOLS_CONTRACT_*' }) {
+            [Environment]::SetEnvironmentVariable($name, $null)
+        }
+        $env:CARGOTOOLS_ENFORCE_QUALITY = '1'
+        $env:CARGOTOOLS_AUTO_FIX = '1'
+        $env:CARGOTOOLS_RA_PREFLIGHT = '1'
+        $env:CARGO_PREFLIGHT = '1'
+        $env:CARGO_RA_PREFLIGHT = '1'
+        $env:CARGO_PREFLIGHT_FORCE = '1'
+        $env:CARGOTOOLS_RUN_TESTS_AFTER_BUILD = '0'
+        $env:CARGOTOOLS_RUN_DOCTESTS_AFTER_BUILD = '0'
+        $env:CARGO_USE_NEXTEST = '0'
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        $env:CARGOTOOLS_CONTRACT_EXIT = '37'
+        Remove-Item -LiteralPath $env:CARGOTOOLS_CONTRACT_LOG -ErrorAction SilentlyContinue
+        Mock Resolve-CacheRoot -ModuleName CargoTools { $TestDrive }
+        Mock Ensure-MsvcEnv -ModuleName CargoTools {}
+        Mock Initialize-CargoEnv -ModuleName CargoTools {}
+        Mock Test-CargoMachineDependencies -ModuleName CargoTools { [pscustomobject]@{ Passed = $true } }
+        Mock Resolve-LldLinker -ModuleName CargoTools { $null }
+        Mock Apply-LinkerSettings -ModuleName CargoTools { $false }
+        Mock Apply-NativeCpuFlag -ModuleName CargoTools {}
+        Mock Start-SccacheServer -ModuleName CargoTools { $true }
+        Mock Enter-CargoBuildQueue -ModuleName CargoTools { [pscustomobject]@{ TicketPath = 'fixture-ticket' } }
+        Mock Exit-CargoBuildQueue -ModuleName CargoTools {}
+        Mock Get-RustupPath -ModuleName CargoTools { $env:CARGOTOOLS_CONTRACT_SHIM }
+        Mock Resolve-CargoToolchain -ModuleName CargoTools { 'stable' }
+        Mock Write-CargoStatus -ModuleName CargoTools {}
+        Mock Write-CargoBuildPhase -ModuleName CargoTools {}
+        Mock Write-CargoDebug -ModuleName CargoTools {}
+        Mock Show-SccacheStatus -ModuleName CargoTools {}
+        Mock Test-AutoCopyEnabled -ModuleName CargoTools { $false }
+        Mock Invoke-PreflightLocal -ModuleName CargoTools { throw 'unexpected regular preflight' }
+        Mock Invoke-RaDiagnosticsLocal -ModuleName CargoTools { throw 'unexpected RA preflight' }
+        & (Get-Module CargoTools) { $script:LlmOutputMode = $false }
+    }
+
+    It 'suppresses all preflight and env-driven fixes with <Label>' -ForEach @(
+        @{ Label = 'standalone opt-out'; CargoArgs = @('build', '--no-preflight') }
+        @{ Label = 'opt-out before enable'; CargoArgs = @('build', '--no-preflight', '--preflight', '--preflight-ra') }
+        @{ Label = 'opt-out after enable'; CargoArgs = @('build', '--preflight', '--preflight-ra', '--no-preflight') }
+        @{ Label = 'opt-out before forced mode'; CargoArgs = @('build', '--no-preflight', '--preflight-force', '--preflight-mode', 'all') }
+    ) {
+        # Real argument parsing, defaults, and IDE guards run; only external work is mocked.
+        $result = @(Invoke-CargoWrapper -ArgumentList $CargoArgs)
+        $exitCode = $global:LASTEXITCODE
+        $calls = @(Read-NativeCall)
+        $calls.Count | Should -Be 1
+        $calls[0] | Should -Be @('run', 'stable', 'cargo', 'build')
+        $result[-1] | Should -Be 0
+        $exitCode | Should -Be 0
+        Should -Invoke Invoke-PreflightLocal -ModuleName CargoTools -Times 0 -Exactly
+        Should -Invoke Invoke-RaDiagnosticsLocal -ModuleName CargoTools -Times 0 -Exactly
+    }
+
+    It 'honors explicit --fix while retaining the real hard preflight opt-out' {
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'clippy'
+        $result = @(Invoke-CargoWrapper -ArgumentList @('test', '--no-preflight', '--fix'))
+        $exitCode = $global:LASTEXITCODE
+        $calls = @(Read-NativeCall)
+        $calls.Count | Should -Be 1
+        $calls[0] | Should -Be @('run', 'stable', 'cargo', 'clippy', '--fix', '--allow-dirty', '--allow-staged', '--allow-no-vcs')
+        $result[-1] | Should -Be 37
+        $exitCode | Should -Be 37
+        Should -Invoke Invoke-PreflightLocal -ModuleName CargoTools -Times 0 -Exactly
+        Should -Invoke Invoke-RaDiagnosticsLocal -ModuleName CargoTools -Times 0 -Exactly
     }
 }
