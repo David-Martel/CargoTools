@@ -1048,7 +1048,10 @@ function Initialize-CargoEnv {
         Write-Warning 'sccache not found; disabling RUSTC_WRAPPER for this session.'
     }
     if (-not $env:CARGO_INCREMENTAL) { $env:CARGO_INCREMENTAL = '0' }
-    if (-not $env:BINSTALL_DISABLE_TELEMETRY) { $env:BINSTALL_DISABLE_TELEMETRY = '1' }
+    # cargo-binstall's --disable-telemetry uses clap's bool value_parser (accepts only
+    # "true"/"false" via its env binding); '1' fails with "invalid value '1' for
+    # '--disable-telemetry' [possible values: true, false].
+    if (-not $env:BINSTALL_DISABLE_TELEMETRY) { $env:BINSTALL_DISABLE_TELEMETRY = 'true' }
 
     # CARGO_INCREMENTAL=1 with sccache silently destroys cache hit rates (sccache#236)
     if ($env:CARGO_INCREMENTAL -eq '1' -and $env:RUSTC_WRAPPER -eq 'sccache') {

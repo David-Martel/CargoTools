@@ -19,7 +19,10 @@ rustup, or cargo install as appropriate. Existing commands are skipped unless
 
     $tools = @(Get-CargoAccelerationToolCatalog -Profile $Profile)
     $results = New-Object System.Collections.Generic.List[object]
-    $env:BINSTALL_DISABLE_TELEMETRY = '1'
+    # cargo-binstall's --disable-telemetry uses clap's bool value_parser (accepts only
+    # "true"/"false" via its env binding); '1' fails with "invalid value '1' for
+    # '--disable-telemetry' [possible values: true, false].
+    $env:BINSTALL_DISABLE_TELEMETRY = 'true'
 
     $cargoBinstall = Find-CargoCommandPath -Name 'cargo-binstall'
     $cargo = Find-CargoCommandPath -Name 'cargo'
