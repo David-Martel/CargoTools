@@ -147,6 +147,11 @@ function Get-WrapperContext {
 
     for ($i = 0; $i -lt $InvocationArgs.Count; $i++) {
         $arg = $InvocationArgs[$i]
+        if ($arg -eq '--') {
+            # Cargo's separator transfers all later tokens to the child.
+            for (; $i -lt $InvocationArgs.Count; $i++) { $passThrough.Add($InvocationArgs[$i]) }
+            break
+        }
         switch ($arg) {
             '--help'          { $helpRequested    = $true }
             '-h'              { $helpRequested    = $true }

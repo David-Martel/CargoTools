@@ -194,3 +194,143 @@ Describe 'Actual top-level wrappers retain native offline exit codes with source
         else { $result.ErrorOutput | Should -Match 'absent.toml' }
     }
 }
+
+BeforeDiscovery {
+    $outerChildCases=foreach($shell in @('Core','Desktop')) {
+        foreach($wrapper in @('cargo','cargo-route')) {
+            foreach($flag in @('--help','--version','--diagnose','--llm','--no-wrapper','--json-output','')) {
+                @{Shell=$shell;Wrapper=$wrapper;Flag=$flag}
+            }
+        }
+    }
+    $outerHostCases=foreach($shell in @('Core','Desktop')) {
+        foreach($wrapper in @('cargo','cargo-route')) {
+            foreach($flag in @('--help','--no-wrapper')) { @{Shell=$shell;Wrapper=$wrapper;Flag=$flag} }
+        }
+    }
+}
+
+Describe 'Outer wrapper transfers child flags only after the Cargo separator' -Tag 'Unit','FreshProcess' {
+    BeforeAll {
+        $script:OuterHelper=Import-Module $script:SelectionHelper -Force -PassThru
+        $script:OuterProbe=Join-Path $TestDrive 'outer-probe.ps1'
+        [IO.File]::WriteAllText($script:OuterProbe,@'
+param([string]$HelperPath,[string]$RepositoryRoot,[string]$Directory,[string]$Wrapper,[string]$Flag,[bool]$HostFlag)
+$ErrorActionPreference='Stop'
+Import-Module Microsoft.PowerShell.Management,Microsoft.PowerShell.Utility -Global
+$encoding=[Text.UTF8Encoding]::new($false)
+$wrapperRoot=Join-Path $Directory 'wrappers'
+$moduleRoot=Join-Path $Directory 'module'
+[void][IO.Directory]::CreateDirectory($wrapperRoot)
+[void][IO.Directory]::CreateDirectory($moduleRoot)
+foreach($name in @('cargo.ps1','cargo-route.ps1')) {
+    [IO.File]::Copy((Join-Path $RepositoryRoot ('wrappers/'+$name)),(Join-Path $wrapperRoot $name))
+}
+[IO.File]::Copy($HelperPath,(Join-Path $wrapperRoot '_WrapperHelpers.psm1'))
+$env:PCAI_OUTER_RECEIPT=Join-Path $Directory 'route.json'
+$moduleSource=@"
+function Invoke-CargoRoute {
+    param([string[]]`$ArgumentList)
+    [IO.File]::WriteAllText(`$env:PCAI_OUTER_RECEIPT,([pscustomobject]@{Route='module';Arguments=@(`$ArgumentList)}|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new(`$false))
+    '{"route":"module"}'
+    return 0
+}
+function Invoke-CargoWrapper { return 0 }
+function Invoke-CargoWsl { return 0 }
+function Invoke-CargoDocker { return 0 }
+function Invoke-CargoMacos { return 0 }
+function Invoke-RustAnalyzerWrapper { return 0 }
+Export-ModuleMember -Function Invoke-CargoRoute,Invoke-CargoWrapper,Invoke-CargoWsl,Invoke-CargoDocker,Invoke-CargoMacos,Invoke-RustAnalyzerWrapper
+"@
+[IO.File]::WriteAllText((Join-Path $moduleRoot 'CargoTools.psm1'),$moduleSource,$encoding)
+[IO.File]::WriteAllText((Join-Path $moduleRoot 'CargoTools.psd1'),"@{RootModule='CargoTools.psm1';ModuleVersion='0.9.0';GUID='d8e7945e-15ab-48de-b0fb-e9cd659571ac';FunctionsToExport=@('*');AliasesToExport=@();CmdletsToExport=@();VariablesToExport=@()}",$encoding)
+$env:CARGOTOOLS_MANIFEST=Join-Path $moduleRoot 'CargoTools.psd1'
+$env:CARGO_RAW=$null
+$env:PCAI_OUTER_NATIVE=Join-Path $Directory 'native.cmd'
+[IO.File]::WriteAllText($env:PCAI_OUTER_NATIVE,"@echo off`r`necho {`"route`":`"raw`"}`r`nexit /b 0`r`n",[Text.ASCIIEncoding]::new())
+function global:rustup {
+    [IO.File]::WriteAllText($env:PCAI_OUTER_RECEIPT,([pscustomobject]@{Route='raw';Arguments=@($args)}|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+    & $env:PCAI_OUTER_NATIVE
+    $global:LASTEXITCODE=$LASTEXITCODE
+}
+# Diagnostic controls stay read-only and never contact the shared cache server.
+function global:sccache { 'Cache hits 0'; $global:LASTEXITCODE=0 }
+$global:LASTEXITCODE=0
+$tokens=if($HostFlag){@($Flag,'run','--','child')}else{@('run','--',$Flag)}
+& (Join-Path $wrapperRoot ($Wrapper+'.ps1')) @tokens
+exit $LASTEXITCODE
+'@,$script:SelectionEncoding)
+        function Invoke-OuterWrapperChild {
+            param([string]$Shell,[string]$Wrapper,[string]$Flag,[bool]$HostFlag=$false)
+            $directory=Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+            [void][IO.Directory]::CreateDirectory($directory)
+            $executable=if($Shell -eq 'Desktop'){Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'}else{(Get-Command pwsh -ErrorAction Stop).Source}
+            $values=@($script:OuterProbe,$script:SelectionHelper,$script:SelectionRoot,$directory,$Wrapper,$Flag)
+            $quoted=@($values|ForEach-Object {"'"+([string]$_).Replace("'","''")+"'"})
+            $command='& '+$quoted[0]+' -HelperPath '+$quoted[1]+' -RepositoryRoot '+$quoted[2]+' -Directory '+$quoted[3]+' -Wrapper '+$quoted[4]+' -Flag '+$quoted[5]+' -HostFlag '+[string]$(if($HostFlag){'$true'}else{'$false'})+'; exit $LASTEXITCODE'
+            $start=[Diagnostics.ProcessStartInfo]::new()
+            $start.FileName=$executable
+            $start.Arguments='-NoLogo -NoProfile -NonInteractive -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+            $start.WorkingDirectory=$directory
+            $start.UseShellExecute=$false
+            $start.RedirectStandardOutput=$true
+            $start.RedirectStandardError=$true
+            $process=[Diagnostics.Process]::new()
+            $process.StartInfo=$start
+            try {
+                [void]$process.Start()
+                $output=$process.StandardOutput.ReadToEndAsync()
+                $errorOutput=$process.StandardError.ReadToEndAsync()
+                if(-not $process.WaitForExit(30000)) {
+                    $process.Kill()
+                    if(-not $process.WaitForExit(5000)){throw 'Exact outer fixture child termination was not confirmed.'}
+                    throw 'Outer wrapper fixture exceeded its 30-second test guard.'
+                }
+                $receipt=Join-Path $directory 'route.json'
+                $observation=if(Test-Path -LiteralPath $receipt){Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json}else{$null}
+                $copyHashes=@(foreach($name in @('cargo.ps1','cargo-route.ps1')) {
+                    [pscustomobject]@{Name=$name;Original=(Get-FileHash (Join-Path $script:SelectionRoot ('wrappers/'+$name))).Hash;Copy=(Get-FileHash (Join-Path $directory ('wrappers/'+$name))).Hash}
+                })
+                [pscustomobject]@{ExitCode=$process.ExitCode;Observation=$observation;Output=$output.GetAwaiter().GetResult();ErrorOutput=$errorOutput.GetAwaiter().GetResult();CopyHashes=$copyHashes}
+            }finally{$process.Dispose()}
+        }
+    }
+
+    It 'keeps child <Flag> through actual <Wrapper> in <Shell>' -ForEach $outerChildCases {
+        $result=Invoke-OuterWrapperChild -Shell $Shell -Wrapper $Wrapper -Flag $Flag
+        $result.ExitCode|Should -Be 0 -Because ($result.Output+$result.ErrorOutput)
+        $result.Observation|Should -Not -BeNullOrEmpty
+        $result.Observation.Route|Should -BeExactly 'module'
+        @($result.Observation.Arguments)|Should -Be @('run','--',$Flag)
+        $result.Output|Should -Match '"route":"module"'
+        $result.Output|Should -Not -Match '"phase":"start"|WRAPPER FLAGS|CargoTools wrapper/'
+        $result.ErrorOutput|Should -Not -Match '"phase":"start"'
+        foreach($copy in $result.CopyHashes){$copy.Copy|Should -BeExactly $copy.Original}
+    }
+
+    It 'honors host <Flag> before the separator through <Wrapper> in <Shell>' -ForEach $outerHostCases {
+        $result=Invoke-OuterWrapperChild -Shell $Shell -Wrapper $Wrapper -Flag $Flag -HostFlag $true
+        $result.ExitCode|Should -Be 0 -Because ($result.Output+$result.ErrorOutput)
+        if($Flag -eq '--help') {
+            $result.Observation.Route|Should -BeExactly 'raw'
+            @($result.Observation.Arguments)|Should -Be @('run','stable','cargo','help','run')
+            $result.Output|Should -Match 'WRAPPER FLAGS'
+        }else {
+            $result.Observation.Route|Should -BeExactly 'raw'
+            @($result.Observation.Arguments)|Should -Be @('run','stable','cargo','run','--','child')
+        }
+    }
+
+    It 'recognizes host <Flag> before the separator without consuming a matching child flag' -ForEach @(
+        @{Flag='--help';Field='HelpRequested'}
+        @{Flag='--version';Field='VersionRequested'}
+        @{Flag='--diagnose';Field='DiagnoseRequested'}
+        @{Flag='--llm';Field='LlmMode'}
+        @{Flag='--no-wrapper';Field='NoWrapper'}
+        @{Flag='--json-output';Field='LlmMode'}
+    ) {
+        $ctx=& $script:OuterHelper {param($tokens) Get-WrapperContext -InvocationArgs $tokens} @($Flag,'run','--',$Flag)
+        $ctx.$Field|Should -BeTrue
+        @($ctx.PassThrough)|Should -Be @('run','--',$Flag)
+    }
+}
