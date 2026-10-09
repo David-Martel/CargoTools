@@ -147,6 +147,11 @@ function Get-WrapperContext {
 
     for ($i = 0; $i -lt $InvocationArgs.Count; $i++) {
         $arg = $InvocationArgs[$i]
+        if ($arg -eq '--') {
+            # Cargo's separator transfers all later tokens to the child.
+            for (; $i -lt $InvocationArgs.Count; $i++) { $passThrough.Add($InvocationArgs[$i]) }
+            break
+        }
         switch ($arg) {
             '--help'          { $helpRequested    = $true }
             '-h'              { $helpRequested    = $true }
@@ -192,11 +197,53 @@ function Resolve-Subcommand {
 # Import-CargoToolsResilient
 # Returns $true on success, writes diagnostics, exits on fatal errors.
 # --------------------------------------------------------------------------
+function Get-CargoToolsCanonicalFile {
+    param([string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.PSProvider.Name -ne 'FileSystem' -or $item.PSIsContainer) { throw 'CargoTools selection must be an existing filesystem file.' }
+    return $item.FullName
+}
+
+function Import-CargoToolsExact {
+    param([string]$Manifest)
+    $manifestPath = Get-CargoToolsCanonicalFile $Manifest
+    $data = Test-ModuleManifest -Path $manifestPath -ErrorAction Stop
+    if (-not $data.RootModule) { throw 'CargoTools manifest lacks RootModule.' }
+    $expectedVersion = $data.Version
+    $modulePath = Get-CargoToolsCanonicalFile (Join-Path (Split-Path -Parent $manifestPath) $data.RootModule)
+    $existing = @(Get-Module CargoTools -All -ErrorAction SilentlyContinue)
+    foreach ($module in $existing) {
+        if ($module.Version -ne $expectedVersion -or -not (Get-CargoToolsCanonicalFile $module.Path).Equals($modulePath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'A conflicting CargoTools module is already loaded; use a fresh process.'
+        }
+    }
+    Import-Module $manifestPath -Global -NoClobber -ErrorAction Stop
+    # Name-only lookup may autoload another version; inspect caller-resolved
+    # commands with autoload disabled and require the selected module file.
+    $oldAutoload = $PSModuleAutoLoadingPreference
+    try {
+        $PSModuleAutoLoadingPreference = 'None'
+        foreach ($name in @('Invoke-CargoWrapper','Invoke-CargoRoute','Invoke-CargoWsl','Invoke-CargoDocker','Invoke-CargoMacos','Invoke-RustAnalyzerWrapper')) {
+            $command = Get-Command $name -ErrorAction Stop
+            if ($command.CommandType -ne 'Function' -or -not $command.Module -or $command.Module.Name -ne 'CargoTools' -or $command.Module.Version -ne $expectedVersion -or -not (Get-CargoToolsCanonicalFile $command.Module.Path).Equals($modulePath, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Caller command $name does not belong to the selected CargoTools module."
+            }
+        }
+    } finally { $PSModuleAutoLoadingPreference = $oldAutoload }
+}
+
 function Import-CargoToolsResilient {
     param([bool]$EmitLlm = $false)
 
-    # Already loaded?
-    if (Get-Module CargoTools -ErrorAction SilentlyContinue) { return $true }
+    # An explicit selection is authoritative: invalid/conflicting selections
+    # never fall back to an installed or adjacent copy.
+    if ($env:CARGOTOOLS_MANIFEST) {
+        try { Import-CargoToolsExact $env:CARGOTOOLS_MANIFEST }
+        catch { Write-Host "[ERROR] CargoTools explicit selection rejected: $($_.Exception.Message)" -ForegroundColor Red; return $false }
+        _Test-PathShadowed -EmitLlm:$EmitLlm
+        if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) { return $false }
+        return $true
+    }
 
     $candidates = @(
         $env:CARGOTOOLS_MANIFEST,
@@ -220,7 +267,9 @@ function Import-CargoToolsResilient {
         $maxRetries = if ($isOneDrive) { 3 } else { 1 }
         for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
             try {
-                Import-Module $path -ErrorAction Stop
+                # This helper itself is a module. A local import is invisible
+                # to the calling wrapper and permits autoload of an older copy.
+                Import-CargoToolsExact $path
                 $loaded = $true
 
                 if ($attempt -gt 1) {
@@ -257,7 +306,9 @@ function Import-CargoToolsResilient {
     # Last resort: Import-Module by name
     if (-not $loaded) {
         try {
-            Import-Module CargoTools -ErrorAction Stop
+            $available = Get-Module CargoTools -ListAvailable | Select-Object -First 1
+            if (-not $available) { throw 'CargoTools is not available.' }
+            Import-CargoToolsExact (Join-Path $available.ModuleBase 'CargoTools.psd1')
             $loaded = $true
         } catch {}
     }

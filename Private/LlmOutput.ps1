@@ -347,11 +347,15 @@ function Get-MessageFormatArgs {
 
     $split = Split-CargoArgsAtDoubleDash -ArgsList $ArgsList
     $result = New-Object System.Collections.Generic.List[string]
-    $result.AddRange([string[]]$split.CargoArgs)
+    if ($null -ne $split.CargoArgs -and @($split.CargoArgs).Count -gt 0) {
+        $result.AddRange([string[]]$split.CargoArgs)
+    }
     $result.Add('--message-format=json')
     if ($split.HasSeparator) {
         $result.Add('--')
-        $result.AddRange([string[]]$split.ToolArgs)
+        if ($null -ne $split.ToolArgs -and @($split.ToolArgs).Count -gt 0) {
+            $result.AddRange([string[]]$split.ToolArgs)
+        }
     }
     return $result.ToArray()
 }

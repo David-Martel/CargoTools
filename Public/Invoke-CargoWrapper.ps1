@@ -371,8 +371,14 @@ an unquoted -- token during advanced-function parameter binding.
     if ($llmOutput) {
         Initialize-CargoLlmOutput
     }
-    $verbosity = Initialize-CargoVerbosity $passThrough.ToArray()
-    $passThroughFiltered = @(Get-VerbosityArgs $passThrough.ToArray())
+    # Verbosity flags belong to CargoTools only before Cargo's separator.
+    $verbositySplit = Split-CargoArgsAtDoubleDash -ArgsList $passThrough.ToArray()
+    $verbosity = Initialize-CargoVerbosity $verbositySplit.CargoArgs
+    $passThroughFiltered = @(Get-VerbosityArgs $verbositySplit.CargoArgs)
+    if ($verbositySplit.HasSeparator) {
+        $passThroughFiltered += @('--')
+        $passThroughFiltered += @($verbositySplit.ToolArgs)
+    }
     $passThrough = New-Object System.Collections.Generic.List[string]
     foreach ($arg in $passThroughFiltered) {
         if ($null -ne $arg) { $passThrough.Add([string]$arg) }
@@ -404,6 +410,7 @@ an unquoted -- token during advanced-function parameter binding.
 
     $preflightSplit = Split-PreflightArgs $passThrough.ToArray()
     if (-not $preflightSplit) { $wrapperExitCode = 1; return $wrapperExitCode }
+    if ($llmOutput) { $preflightSplit.State.JsonOutput = $true }
 
     $passThrough = New-Object System.Collections.Generic.List[string]
     foreach ($arg in @($preflightSplit.Remaining)) {
@@ -539,7 +546,9 @@ an unquoted -- token during advanced-function parameter binding.
                 # Preflight phase
                 if ($preflight.Enabled) {
                     Write-CargoBuildPhase -Phase 'Preflight' -Starting
-                    $preflightExit = Invoke-PreflightLocal -RustupPath $rustupPath -Toolchain $toolchain -PassThroughArgs $passThrough.ToArray() -State $preflight
+                    $preflightOutput = New-Object 'System.Collections.Generic.List[object]'
+                    [int]$preflightExit = Invoke-PreflightLocal -RustupPath $rustupPath -Toolchain $toolchain -PassThroughArgs $passThrough.ToArray() -State $preflight -OutputBuffer $preflightOutput
+                    foreach ($record in $preflightOutput) { Write-Output $record }
                     if ($preflightExit -ne 0) {
                         Write-CargoBuildPhase -Phase 'Preflight' -Failed
                         if ($preflight.Blocking) {
@@ -555,7 +564,9 @@ an unquoted -- token during advanced-function parameter binding.
 
                 # Rust-analyzer diagnostics
                 if ($preflight.RA) {
-                    $raExit = Invoke-RaDiagnosticsLocal -State $preflight -PassThroughArgs $passThrough.ToArray()
+                    $raOutput = New-Object 'System.Collections.Generic.List[object]'
+                    [int]$raExit = Invoke-RaDiagnosticsLocal -State $preflight -PassThroughArgs $passThrough.ToArray() -OutputBuffer $raOutput
+                    foreach ($record in $raOutput) { Write-Output $record }
                     if ($raExit -ne 0 -and $preflight.Blocking) {
                         Write-CargoStatus -Phase 'Preflight' -Message 'rust-analyzer diagnostics failed (blocking)' -Type 'Error'
                         $wrapperExitCode = $raExit

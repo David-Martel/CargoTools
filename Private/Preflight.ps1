@@ -21,6 +21,11 @@ function Split-PreflightArgs {
 
     for ($i = 0; $i -lt $InputArgs.Count; $i++) {
         $arg = $InputArgs[$i]
+        if ($arg -eq '--') {
+            # Cargo's separator transfers all later tokens to the child.
+            for (; $i -lt $InputArgs.Count; $i++) { $remaining.Add($InputArgs[$i]) }
+            break
+        }
         switch ($arg) {
             '--preflight' { $state.Enabled = $true; continue }
             '--preflight-mode' {
@@ -143,8 +148,12 @@ function Invoke-PreflightLocal {
         [string]$RustupPath,
         [string]$Toolchain,
         [string[]]$PassThroughArgs,
-        [hashtable]$State
+        [hashtable]$State,
+        [AllowEmptyCollection()][System.Collections.Generic.List[object]]$OutputBuffer
     )
+
+    # Status is the only success-stream return. Internal callers that need
+    # native output provide a separate buffer and replay its records once.
 
     if (-not $State.Enabled) { return 0 }
     if (-not $Toolchain) { $Toolchain = Resolve-CargoToolchain -RustupPath $RustupPath }
@@ -166,7 +175,8 @@ function Invoke-PreflightLocal {
     switch ($State.Mode) {
         'check' {
             $preArgs = Ensure-MessageFormatShort $preArgs
-            & $RustupPath run $Toolchain cargo @preArgs
+            & $RustupPath run $Toolchain cargo @preArgs |
+                ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
             if ($LASTEXITCODE -ne 0) {
                 if ($State.Blocking) { return $LASTEXITCODE }
                 Write-Warning 'Preflight check failed (non-blocking).'
@@ -175,14 +185,16 @@ function Invoke-PreflightLocal {
         'clippy' {
             $preArgs = Ensure-MessageFormatShort $preArgs
             if ($State.Strict) { $preArgs += @('--', '-D', 'warnings') }
-            & $RustupPath run $Toolchain cargo @preArgs
+            & $RustupPath run $Toolchain cargo @preArgs |
+                ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
             if ($LASTEXITCODE -ne 0) {
                 if ($State.Blocking) { return $LASTEXITCODE }
                 Write-Warning 'Preflight clippy failed (non-blocking).'
             }
         }
         'fmt' {
-            & $RustupPath run $Toolchain cargo fmt --all -- --check
+            & $RustupPath run $Toolchain cargo fmt --all -- --check |
+                ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
             if ($LASTEXITCODE -ne 0) {
                 if ($State.Blocking) { return $LASTEXITCODE }
                 Write-Warning 'Preflight fmt failed (non-blocking).'
@@ -193,7 +205,8 @@ function Invoke-PreflightLocal {
                 Write-Warning 'cargo-deny not found; skipping. Install: cargo install cargo-deny'
                 return 0
             }
-            & $RustupPath run $Toolchain cargo deny check 2>&1
+            & $RustupPath run $Toolchain cargo deny check 2>&1 |
+                ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
             if ($LASTEXITCODE -ne 0) {
                 if ($State.Blocking) { return $LASTEXITCODE }
                 Write-Warning 'Preflight deny check failed (non-blocking).'
@@ -209,7 +222,8 @@ function Invoke-PreflightLocal {
                 }
             }
             $checkArgs = Ensure-MessageFormatShort $checkArgs
-            & $RustupPath run $Toolchain cargo @checkArgs
+            & $RustupPath run $Toolchain cargo @checkArgs |
+                ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
             if ($LASTEXITCODE -ne 0) {
                 if ($State.Blocking) { return $LASTEXITCODE }
                 Write-Warning 'Preflight check failed (non-blocking).'
@@ -225,13 +239,15 @@ function Invoke-PreflightLocal {
             }
             $clippyArgs = Ensure-MessageFormatShort $clippyArgs
             if ($State.Strict) { $clippyArgs += @('--', '-D', 'warnings') }
-            & $RustupPath run $Toolchain cargo @clippyArgs
+            & $RustupPath run $Toolchain cargo @clippyArgs |
+                ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
             if ($LASTEXITCODE -ne 0) {
                 if ($State.Blocking) { return $LASTEXITCODE }
                 Write-Warning 'Preflight clippy failed (non-blocking).'
             }
 
-            & $RustupPath run $Toolchain cargo fmt --all -- --check
+            & $RustupPath run $Toolchain cargo fmt --all -- --check |
+                ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
             if ($LASTEXITCODE -ne 0) {
                 if ($State.Blocking) { return $LASTEXITCODE }
                 Write-Warning 'Preflight fmt failed (non-blocking).'
@@ -240,7 +256,8 @@ function Invoke-PreflightLocal {
             # Optional deny check in 'all' mode (off by default).
             if ($env:CARGOTOOLS_ENABLE_DENY -and (Test-Truthy $env:CARGOTOOLS_ENABLE_DENY)) {
                 if (Test-CargoCommand -Name 'cargo-deny') {
-                    & $RustupPath run $Toolchain cargo deny check 2>&1
+                    & $RustupPath run $Toolchain cargo deny check 2>&1 |
+                        ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
                     if ($LASTEXITCODE -ne 0) {
                         if ($State.Blocking) { return $LASTEXITCODE }
                         Write-Warning 'Preflight deny check failed (non-blocking).'
@@ -259,7 +276,8 @@ function Invoke-PreflightLocal {
 function Invoke-RaDiagnosticsLocal {
     param(
         [hashtable]$State,
-        [string[]]$PassThroughArgs
+        [string[]]$PassThroughArgs,
+        [AllowEmptyCollection()][System.Collections.Generic.List[object]]$OutputBuffer
     )
 
     if (-not $State.RA) { return 0 }
@@ -291,7 +309,8 @@ function Invoke-RaDiagnosticsLocal {
             Out-File -FilePath $outputPath -Encoding utf8
     } else {
         & $raPath diagnostics '.' @raFlags 2>&1 |
-            Where-Object { $_ -notmatch 'ERROR inference diagnostic in desugared expr' }
+            Where-Object { $_ -notmatch 'ERROR inference diagnostic in desugared expr' } |
+            ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
     }
     if ($LASTEXITCODE -ne 0) {
         if ($State.Blocking) { return $LASTEXITCODE }
