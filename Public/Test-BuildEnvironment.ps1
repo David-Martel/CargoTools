@@ -172,7 +172,7 @@ function Test-BuildEnvironment {
     } else { 'None' }
 
     # --- Global config files ---
-    $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $HOME '.cargo' }
+    $cargoHome = Resolve-CargoToolsFastCargoHome
     $cargoConfigPath = Join-Path $cargoHome 'config.toml'
     if (Test-Path $cargoConfigPath) {
         $cargoConfig = Read-TomlSections -Path $cargoConfigPath

@@ -88,10 +88,12 @@ function Get-DefaultMachineConfig {
     #>
     $config = @{}
 
-    # Determine cache root: prefer T: (Dev Drive/ReFS), then D:, then local
-    if (Test-Path 'T:\') {
+    # Determine cache root: prefer local Fixed T: (Dev Drive/ReFS), then Fixed D:, then LOCALAPPDATA
+    $tFixed = (Test-Path 'T:\') -and $(try { ([System.IO.DriveInfo]'T:').DriveType -eq [System.IO.DriveType]::Fixed } catch { $false })
+    $dFixed = (Test-Path 'D:\') -and $(try { ([System.IO.DriveInfo]'D:').DriveType -eq [System.IO.DriveType]::Fixed } catch { $false })
+    if ($tFixed) {
         $config['CacheRoot'] = 'T:\RustCache'
-    } elseif (Test-Path 'D:\') {
+    } elseif ($dFixed) {
         $config['CacheRoot'] = 'D:\RustCache'
     } else {
         $config['CacheRoot'] = Join-Path $env:LOCALAPPDATA 'RustCache'

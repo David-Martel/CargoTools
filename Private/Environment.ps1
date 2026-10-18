@@ -1,6 +1,22 @@
+foreach ($__ctVar in @(
+    @{ Name = 'CARGO_HOME'; Fallback = (Join-Path $HOME '.cargo') },
+    @{ Name = 'RUSTUP_HOME'; Fallback = (Join-Path $HOME '.rustup') },
+    @{ Name = 'SCCACHE_DIR'; Fallback = (Join-Path $env:LOCALAPPDATA 'RustCache\sccache') }
+)) {
+    $__ctVal = [Environment]::GetEnvironmentVariable($__ctVar.Name, 'Process')
+    if ($__ctVal -match '^([A-Za-z]:\\)' -and -not (Test-Path -LiteralPath $Matches[1])) {
+        $__userVal = [Environment]::GetEnvironmentVariable($__ctVar.Name, 'User')
+        if ($__userVal -and ($__userVal -notmatch '^([A-Za-z]:\\)' -or (Test-Path -LiteralPath $Matches[1]))) {
+            [Environment]::SetEnvironmentVariable($__ctVar.Name, $__userVal, 'Process')
+        } else {
+            [Environment]::SetEnvironmentVariable($__ctVar.Name, $__ctVar.Fallback, 'Process')
+        }
+    }
+}
+
 function Get-RustupPath {
     foreach ($candidate in @(
-        $(if ($env:CARGO_HOME) { Join-Path $env:CARGO_HOME 'bin\rustup.exe' }),
+        $(if ($env:CARGO_HOME -and (Test-Path -LiteralPath $env:CARGO_HOME)) { Join-Path $env:CARGO_HOME 'bin\rustup.exe' }),
         'T:\RustCache\cargo-home\bin\rustup.exe',
         (Join-Path $env:USERPROFILE '.cargo\bin\rustup.exe')
     )) {
