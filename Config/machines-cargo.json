@@ -11,18 +11,6 @@
     "Hostname": "DTM-WORK",
     "CargoTargetDir": "T:\\RustCache\\cargo-target"
   },
-  "DTM-P1GEN7": {
-    "RustupHome": "T:\\RustCache\\rustup",
-    "BuildJobs": 4,
-    "CargoHome": "T:\\RustCache\\cargo-home",
-    "SccacheCacheSize": "30G",
-    "Hostname": "DTM-P1GEN7",
-    "SccacheIdleTimeout": "600",
-    "LastSeen": "2026-02-28T16:59:03.8503887-05:00",
-    "CacheRoot": "T:\\RustCache",
-    "CargoTargetDir": "T:\\RustCache\\cargo-target",
-    "SccacheDir": "T:\\RustCache\\sccache"
-  },
   "DTM-CARBON-TWO": {
     "VsPath": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community",
     "QueueStaleMinutes": 240,
@@ -46,5 +34,48 @@
     "MsvcLinkExe": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\link.exe",
     "Hostname": "DTM-CARBON-TWO",
     "SccacheCacheSize": "30G"
+  },
+  "DTM-P1GEN7": {
+    "RustupHome": "T:\\RustCache\\rustup",
+    "BuildJobs": 4,
+    "CargoHome": "T:\\RustCache\\cargo-home",
+    "SccacheCacheSize": "30G",
+    "Hostname": "DTM-P1GEN7",
+    "SccacheIdleTimeout": "600",
+    "LastSeen": "2026-02-28T16:59:03.8503887-05:00",
+    "CacheRoot": "T:\\RustCache",
+    "CargoTargetDir": "T:\\RustCache\\cargo-target",
+    "SccacheDir": "T:\\RustCache\\sccache"
+  },
+  "DTM-SUPER-NUC": {
+    "Hostname": "DTM-SUPER-NUC",
+    "MsvcBinDir": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64",
+    "MsvcLinkExe": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\bin\\Hostx64\\x64\\link.exe",
+    "CudaComputeCap": "120",
+    "WindowsSdkUmLib": "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.26100.0\\um\\x64",
+    "WindowsSdkUcrtLib": "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.26100.0\\ucrt\\x64",
+    "SccacheDir": "C:\\Users\\david\\AppData\\Local\\RustCache\\sccache",
+    "GpuMemoryMB": 16311,
+    "GpuName": "NVIDIA GeForce RTX 5060 Ti",
+    "QueueStaleMinutes": 240,
+    "BuildJobs": 4,
+    "MsvcLibDir": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Tools\\MSVC\\14.51.36231\\lib\\x64",
+    "TargetMode": "local",
+    "VsPath": "C:\\Program Files\\Microsoft Visual Studio\\18\\Community",
+    "ClangClExe": "C:\\Program Files\\LLVM\\bin\\clang-cl.exe",
+    "RustupHome": "C:\\Users\\david\\.rustup",
+    "MaxConcurrentBuilds": 1,
+    "LlvmPath": "C:\\Program Files\\LLVM",
+    "CargoHome": "C:\\Users\\david\\.cargo",
+    "LldLinkExe": "C:\\Program Files\\LLVM\\bin\\lld-link.exe",
+    "CargoTargetDir": "C:\\Users\\david\\AppData\\Local\\RustCache\\cargo-target",
+    "SccacheCacheSize": "30G",
+    "MsvcVersion": "14.51.36231",
+    "QueuePollIntervalMs": 500,
+    "SccacheIdleTimeout": "3600",
+    "LlvmVersion": "23.1.2",
+    "CacheRoot": "C:\\Users\\david\\AppData\\Local\\RustCache",
+    "LastSeen": "2026-10-10T10:36:01.6735756-04:00",
+    "WindowsSdkVersion": "10.0.26100.0"
   }
 }
