@@ -229,8 +229,17 @@ Describe 'Auto-copy disabled scenarios' {
         }
     }
     It 'Defaults to disabled for local project targets when unset' {
-        Remove-Item Env:CARGO_AUTO_COPY -ErrorAction SilentlyContinue
-        & $script:TestAutoCopyEnabled | Should -Be $false
+        $savedAutoCopy = $env:CARGO_AUTO_COPY
+        $savedTarget = $env:CARGO_TARGET_DIR
+        try {
+            Remove-Item Env:CARGO_AUTO_COPY -ErrorAction SilentlyContinue
+            $projectRoot = Join-Path $TestDrive 'local-target-project'
+            $env:CARGO_TARGET_DIR = Join-Path $projectRoot 'target'
+            & $script:TestAutoCopyEnabled -ProjectRoot $projectRoot | Should -Be $false
+        } finally {
+            $env:CARGO_AUTO_COPY = $savedAutoCopy
+            $env:CARGO_TARGET_DIR = $savedTarget
+        }
     }
 }
 

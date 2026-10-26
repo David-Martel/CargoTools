@@ -104,6 +104,9 @@ function Import-CargoToolsAccelerationStack {
 if (-not (Get-Variable -Name CargoToolsCommandPathCache -Scope Script -ErrorAction SilentlyContinue)) {
     $script:CargoToolsCommandPathCache = @{}
 }
+if (-not (Get-Variable -Name CargoToolsCommandCacheContext -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:CargoToolsCommandCacheContext = $null
+}
 if (-not (Get-Variable -Name CargoToolsUseProfileAccelerator -Scope Script -ErrorAction SilentlyContinue)) {
     $script:CargoToolsUseProfileAccelerator = $false
 }
@@ -167,6 +170,25 @@ function Select-CargoCommandPathCandidate {
     return $null
 }
 
+function Test-CargoApplicationCandidate {
+    [CmdletBinding()]
+    param([AllowNull()][string]$Candidate, [Parameter(Mandatory)][string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Candidate) -or -not [IO.File]::Exists($Candidate)) { return $false }
+    try {
+        if ([IO.Path]::GetExtension($Candidate) -ieq '.ps1') { return $false }
+        $leaf = [IO.Path]::GetFileName($Candidate)
+        $comparison = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            [StringComparison]::OrdinalIgnoreCase
+        } else { [StringComparison]::Ordinal }
+        if ($leaf.Equals($Name, $comparison)) { return $true }
+        foreach ($extension in @([string]$env:PATHEXT -split [IO.Path]::PathSeparator | Where-Object { $_ })) {
+            if ($leaf.Equals(($Name + $extension), $comparison)) { return $true }
+        }
+    } catch { return $false }
+    return $false
+}
+
 function Find-CargoCommandPath {
     [CmdletBinding()]
     param(
@@ -175,56 +197,135 @@ function Find-CargoCommandPath {
         [switch]$AllowNonExternal
     )
 
-    $cacheKey = if ($AllowNonExternal) { "any::$Name" } else { "exe::$Name" }
-    if (-not $BypassCache -and $script:CargoToolsCommandPathCache.ContainsKey($cacheKey)) {
-        return $script:CargoToolsCommandPathCache[$cacheKey]
+    # Explicit paths are cheap to resolve and must not retain removed files or
+    # relative paths from a different filesystem location.
+    if ($Name -match '^[A-Za-z]:[\\/]' -or $Name -match '[\\/]') {
+        if (Test-Path -LiteralPath $Name -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $Name).ProviderPath
+        }
+        return $null
     }
 
-    if ($Name -match '^[A-Za-z]:[\\/]' -or $Name -match '[\\/]') {
-        $resolvedPath = if (Test-Path -LiteralPath $Name -PathType Leaf) {
-            (Resolve-Path -LiteralPath $Name).ProviderPath
-        } else {
-            $null
+    $cacheKey = if ($AllowNonExternal) { "any::$Name" } else { "exe::$Name" }
+    $now = [DateTime]::UtcNow
+    if (-not $BypassCache -and -not $AllowNonExternal) {
+        # Match ProfileAccelerator's PATH/PATHEXT freshness contract, adding
+        # filesystem cwd because PATH may contain relative directories. A
+        # Registry provider location must not replace that filesystem context.
+        $pathNow = [string]$env:PATH
+        $pathExtNow = [string]$env:PATHEXT
+        $cwdNow = $ExecutionContext.SessionState.Path.CurrentFileSystemLocation.ProviderPath
+        $context = $script:CargoToolsCommandCacheContext
+        if ($null -eq $context -or $context.Path -cne $pathNow -or
+            $context.PathExt -cne $pathExtNow -or $context.FileSystemCwd -cne $cwdNow) {
+            $script:CargoToolsCommandPathCache.Clear()
+            $script:CargoToolsCommandCacheContext = [pscustomobject]@{
+                Path = $pathNow; PathExt = $pathExtNow; FileSystemCwd = $cwdNow
+            }
         }
-
-        if (-not $BypassCache) {
-            $script:CargoToolsCommandPathCache[$cacheKey] = $resolvedPath
+        if ($script:CargoToolsCommandPathCache.ContainsKey($cacheKey)) {
+            $cached = $script:CargoToolsCommandPathCache[$cacheKey]
+            if ($cached.ExpiresUtc -gt $now -and
+                (-not $cached.Path -or $AllowNonExternal -or [IO.File]::Exists($cached.Path))) {
+                return $cached.Path
+            }
+            $script:CargoToolsCommandPathCache.Remove($cacheKey)
         }
-        return $resolvedPath
     }
 
     $resolved = $null
-    Initialize-CargoToolsCommandAcceleration | Out-Null
-
-    if ($script:CargoToolsUseProfileAccelerator -and (Get-Command Find-CommandCached -ErrorAction SilentlyContinue)) {
-        try { $resolved = Select-CargoCommandPathCandidate (Find-CommandCached -Name $Name) } catch { $resolved = $null }
+    $pathDirectories = @()
+    $hasRelativePath = $false
+    if (-not $AllowNonExternal -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        foreach ($entry in @([string]$env:PATH -split [IO.Path]::PathSeparator | Where-Object { $_ })) {
+            $directory = $entry.Trim('"')
+            try { $rooted = [IO.Path]::IsPathRooted($directory) }
+            catch { Write-Verbose 'Ignoring an invalid PATH entry during command discovery.'; continue }
+            $pathDirectories += $directory
+            if (-not $rooted) { $hasRelativePath = $true }
+        }
     }
-
-    if (-not $resolved -and $script:CargoToolsUseProfileAccelerator -and (Get-Command Find-CommandNative -ErrorAction SilentlyContinue)) {
-        try { $resolved = Select-CargoCommandPathCandidate (Find-CommandNative -Name $Name) } catch { $resolved = $null }
-    }
-
-    if (-not $resolved) {
-        $cmd = $null
-        try {
-            if ($AllowNonExternal) {
-                $cmd = @(Get-Command $Name -ErrorAction SilentlyContinue) | Select-Object -First 1
-            } else {
-                $cmd = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
+    if ($hasRelativePath -and -not $AllowNonExternal -and
+        [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        # PowerShell's name-based application cache and the accelerator's inner
+        # cache can retain a prior cwd for relative PATH entries. Probe only the
+        # named file at each explicit directory, never enumerate a directory or
+        # mutate the process PATH to work around that cache.
+        $fileSystemCwd = $ExecutionContext.SessionState.Path.CurrentFileSystemLocation.ProviderPath
+        $extensions = @([string]$env:PATHEXT -split [IO.Path]::PathSeparator | Where-Object { $_ })
+        foreach ($directory in $pathDirectories) {
+            $directory = $directory.Trim('"')
+            try {
+                if (-not [IO.Path]::IsPathRooted($directory)) { $directory = [IO.Path]::Combine($fileSystemCwd, $directory) }
+                $candidate = [IO.Path]::Combine($directory, $Name)
+                # Get-Command treats brackets in a qualified name as wildcards.
+                # Literal named-file probes preserve PATH/PATHEXT order without
+                # selecting a similarly named sibling or invoking any command.
+                $suffixedCandidates = @($extensions | ForEach-Object { $candidate + $_ })
+                # PowerShell prefers PATHEXT matches over an extensionless file
+                # for a bare command, but an explicit extension selects itself.
+                $candidates = if ([IO.Path]::HasExtension($Name)) {
+                    @($candidate) + $suffixedCandidates
+                } else {
+                    $suffixedCandidates + @($candidate)
+                }
+                foreach ($literalCandidate in $candidates) {
+                    if ([IO.Path]::GetExtension($literalCandidate) -ieq '.ps1') { continue }
+                    if ([IO.File]::Exists($literalCandidate)) {
+                        $resolved = [IO.Path]::GetFullPath($literalCandidate)
+                        break
+                    }
+                }
+                if ($resolved) { break }
+            } catch { $resolved = $null }
+        }
+    } else {
+        # Functions, aliases and cmdlets use PowerShell's precedence directly;
+        # an executable-only accelerator cannot establish that command identity.
+        if (-not $AllowNonExternal) { Initialize-CargoToolsCommandAcceleration | Out-Null }
+        if (-not $AllowNonExternal -and $script:CargoToolsUseProfileAccelerator) {
+            $cachedLookup = Get-Command Find-CommandCached -ErrorAction SilentlyContinue
+            if ($cachedLookup -and $cachedLookup.Parameters.ContainsKey('BypassCache')) {
+                # An outer miss must be fresh. Reusing an inner positive would
+                # re-admit removed paths or extend the outer expiry contract.
+                try { $resolved = Select-CargoCommandPathCandidate (& $cachedLookup -Name $Name -BypassCache) } catch { $resolved = $null }
+                if (-not (Test-CargoApplicationCandidate -Candidate $resolved -Name $Name)) { $resolved = $null }
             }
-        } catch {
-            $cmd = $null
         }
 
-        if ($cmd) {
-            $resolved = Select-CargoCommandPathCandidate $cmd
+        if (-not $resolved -and -not $AllowNonExternal -and $script:CargoToolsUseProfileAccelerator -and (Get-Command Find-CommandNative -ErrorAction SilentlyContinue)) {
+            try { $resolved = Select-CargoCommandPathCandidate (Find-CommandNative -Name $Name) } catch { $resolved = $null }
+            if (-not (Test-CargoApplicationCandidate -Candidate $resolved -Name $Name)) { $resolved = $null }
+        }
+
+        if (-not $resolved) {
+            $cmd = $null
+            try {
+                if ($AllowNonExternal) {
+                    $cmd = @(Get-Command $Name -ErrorAction SilentlyContinue) | Select-Object -First 1
+                } else {
+                    $cmd = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
+                }
+            } catch { $cmd = $null }
+            if ($cmd) {
+                $resolved = Select-CargoCommandPathCandidate $cmd
+                # Global functions and aliases have no module Source or file
+                # Path. Any-mode still has their PowerShell command identity.
+                if ($AllowNonExternal -and -not $resolved) { $resolved = [string]$cmd.Name }
+            }
         }
     }
 
     $resolved = Select-CargoCommandPathCandidate $resolved
+    if (-not $AllowNonExternal -and -not (Test-CargoApplicationCandidate -Candidate $resolved -Name $Name)) { $resolved = $null }
 
-    if (-not $BypassCache) {
-        $script:CargoToolsCommandPathCache[$cacheKey] = $resolved
+    if (-not $BypassCache -and -not $AllowNonExternal) {
+        # Reuse ProfileAccelerator's bounded positive/miss lifetimes; the outer
+        # cache must not make an inner miss permanent in a long-lived shell.
+        $ttlSeconds = if ($resolved) { 300 } else { 8 }
+        $script:CargoToolsCommandPathCache[$cacheKey] = [pscustomobject]@{
+            Path = $resolved; ExpiresUtc = [DateTime]::UtcNow.AddSeconds($ttlSeconds)
+        }
     }
     return $resolved
 }

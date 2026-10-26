@@ -385,3 +385,44 @@ See also:
 - [`wrappers.md`](wrappers.md) — full CLI reference and JSON envelope schema.
 - [`../CLAUDE.md`](../CLAUDE.md) — module architecture, env vars, design decisions.
 - [`../CHANGELOG.md`](../CHANGELOG.md) — version history.
+
+## Command discovery after a toolchain or PATH change
+
+CargoTools keeps a process-local application lookup cache. It invalidates entries
+when PATH, PATHEXT, or the current filesystem directory changes. Provider-only
+location changes (for example Registry:) retain the last filesystem directory.
+Explicit paths are resolved on every call. Removed positive paths are rechecked;
+otherwise positive entries expire after 300 seconds and misses after 8 seconds,
+using ProfileAccelerator's default bounded lookup lifetimes. These lifetimes are not a
+guarantee that a newly installed higher-priority tool is visible immediately
+when PATH itself has not changed.
+
+The internal Find-CargoCommandPath -BypassCache switch skips CargoTools cache reads
+and writes, and requests a fresh lookup through ProfileAccelerator's bypass flag.
+It does not replace an existing CargoTools entry as a side effect. The inner
+implementation may invalidate its own PATH context before its fresh lookup.
+The installed module must be separately deployed after
+source review; tests of an owned command corpus do not establish a build speedup.
+
+On Windows, application lookups with relative PATH entries probe only the requested name at
+each explicit filesystem directory, avoiding PowerShell's stale relative-name
+cache. Any-command lookups retain PowerShell function/alias/cmdlet precedence
+and bypass the executable-only accelerator and outer cache.
+Any-command mode delegates to PowerShell and retains its own application-cache
+limitations for relative PATH directories when no function or alias wins. Only
+application-mode relative lookup is qualified by the literal-file controls.
+Global functions and aliases with no module Source or physical Path retain their
+command Name as the Any-mode identity, so presence checks remain true. This
+identifier is not a physical executable path and is never cached as one.
+Non-Windows hosts retain PowerShell application discovery, including executable
+permission checks. These Windows command fixtures do not qualify Linux/macOS.
+On an outer application-cache miss, an accelerator supporting BypassCache is
+queried fresh so its own positive cache cannot re-admit removed paths or extend
+the outer lifetime. Every accelerated application candidate must exist, match
+the requested command name/extension, and not be an intrinsic PowerShell script.
+Older accelerators without that switch use the uncached native lookup instead.
+Malformed Windows PATH entries are skipped with verbose diagnostics; unmounted
+drives are handled as literal filenames without provider error records.
+For absolute PATH lookups, accelerated candidate suffixes are validated against
+PATHEXT, but the accelerator's ordering between multiple valid suffixes is not
+requalified here. Its native lookup does not receive PATHEXT ordering.

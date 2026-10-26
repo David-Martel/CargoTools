@@ -133,6 +133,7 @@ FileList = @(
     'Tests\\Common.Tests.ps1',
     'Tests\\Invoke-CargoWrapper.Tests.ps1',
     'Tests\\Environment.Tests.ps1',
+    'Tests\\CommandDiscoveryCache.Tests.ps1',
     'Tests\\Integration.Tests.ps1',
     'Tests\\ErrorScenarios.Tests.ps1',
     'Tests\\Concurrency.Tests.ps1',
