@@ -125,7 +125,7 @@ Describe 'Command discovery context and bounded cache on actual owned Windows pa
         Find-FixtureCommand | Should -BeExactly $first
     }
 
-    It 'bypasses both accelerator and outer cache without writing either cache' {
+    It 'requests a fresh inner lookup without reading or replacing the existing outer cache entry' {
         $first = New-CacheCommand $script:RootA
         Find-FixtureCommand | Should -BeExactly $first
         & $script:CacheModule {
@@ -256,7 +256,7 @@ Describe 'Command discovery context and bounded cache on actual owned Windows pa
     # These retain the actual outer resolver. The accelerator command signature
     # matches installed ProfileAccelerator0.4.1; only that boundary is injected.
     # No native DLL or fake command is executed, and the seam stays enabled.
-    It 'accepts a verified accelerator candidate without reaching the native or PowerShell fallback' {
+    It 'accepts a verified accelerator candidate without reaching the separate native fallback' {
         $expected=New-CacheCommand $script:RootA
         & $script:CacheModule {param($P)
             $script:CargoToolsUseProfileAccelerator=$true;$script:LayerCandidate=$P;$script:CachedCalls=0;$script:NativeCalls=0
@@ -308,12 +308,48 @@ Describe 'Command discovery context and bounded cache on actual owned Windows pa
         (& $script:CacheModule {$script:NativeCalls}) | Should -Be 1
     }
 
-    It 'preserves directory priority before extension priority across relative and absolute PATH entries' {
-        $bin=Join-Path $script:RootA 'bin';$expected=New-CacheCommand $bin
-        $null=New-CacheCommand $script:RootB 'cargo-cache-control.exe'
+    It 'matches actual absolute-PATH directory precedence when relative entry comes <Order>' -ForEach @(
+        @{Order='first';RelativeFirst=$true},@{Order='last';RelativeFirst=$false}
+    ) {
+        $name='cargo-dir-priority-'+[guid]::NewGuid().ToString('N')
+        $bin=Join-Path $script:RootA 'bin'
+        $cmd=New-CacheCommand $bin ($name+'.cmd')
+        $exe=New-CacheCommand $script:RootB ($name+'.exe')
+        $env:PATHEXT='.EXE;.CMD'
+        $absolute=if($RelativeFirst){@($bin,$script:RootB)}else{@($script:RootB,$bin)}
+        $env:PATH=$absolute -join [IO.Path]::PathSeparator
+        $reference=@(Get-Command $name -CommandType Application -ErrorAction Stop)[0].Source
+        $expected=if($RelativeFirst){$cmd}else{$exe}
+        ([StringComparer]::OrdinalIgnoreCase).Equals($reference,$expected) | Should -BeTrue
         Set-Location -LiteralPath $script:RootA
-        $env:PATH='./bin'+[IO.Path]::PathSeparator+$script:RootB;$env:PATHEXT='.EXE;.CMD'
-        Find-FixtureCommand | Should -BeExactly $expected
+        $env:PATH=if($RelativeFirst){'./bin;'+$script:RootB}else{$script:RootB+';./bin'}
+        $actual=Find-FixtureCommand -Name $name
+        ([StringComparer]::OrdinalIgnoreCase).Equals($actual,$reference) | Should -BeTrue
+        [IO.File]::Exists($actual) | Should -BeTrue
+    }
+
+    It 'retains a newly introduced global <Kind> with an empty Source as an Any-mode command identity' -ForEach @(
+        @{Kind='function'},@{Kind='alias'}
+    ) {
+        $name='cargo-global-'+[guid]::NewGuid().ToString('N')
+        $application=New-CacheCommand $script:RootA ($name+'.cmd')
+        (& $script:CacheModule {param($N) Find-CargoCommandPath -Name $N} $name) | Should -BeExactly $application
+        try {
+            if($Kind-eq'function') {
+                Set-Item -LiteralPath ('Function:global:'+$name) -Value {throw 'Owned global fixture must never execute.'}
+            } else {
+                Set-Alias -Name $name -Value Write-Output -Scope Global
+            }
+            $reference=Get-Command $name -ErrorAction Stop
+            $reference.Source | Should -BeNullOrEmpty
+            [string]$reference.CommandType | Should -Be $Kind
+            (& $script:CacheModule {param($N) Find-CargoCommandPath -Name $N -AllowNonExternal} $name) | Should -BeExactly $name
+            (& $script:CacheModule {param($N) Test-CargoCommand -Name $N -AllowNonExternal} $name) | Should -BeTrue
+            (& $script:CacheModule {param($N) Find-CargoCommandPath -Name $N} $name) | Should -BeExactly $application
+        } finally {
+            if($Kind-eq'function'){Remove-Item -LiteralPath ('Function:'+$name) -ErrorAction SilentlyContinue}
+            else {Remove-Item -LiteralPath ('Alias:'+$name) -ErrorAction SilentlyContinue}
+        }
     }
 
 }

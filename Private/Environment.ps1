@@ -307,7 +307,12 @@ function Find-CargoCommandPath {
                     $cmd = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue) | Select-Object -First 1
                 }
             } catch { $cmd = $null }
-            if ($cmd) { $resolved = Select-CargoCommandPathCandidate $cmd }
+            if ($cmd) {
+                $resolved = Select-CargoCommandPathCandidate $cmd
+                # Global functions and aliases have no module Source or file
+                # Path. Any-mode still has their PowerShell command identity.
+                if ($AllowNonExternal -and -not $resolved) { $resolved = [string]$cmd.Name }
+            }
         }
     }
 

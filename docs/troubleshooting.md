@@ -397,9 +397,11 @@ using ProfileAccelerator's default bounded lookup lifetimes. These lifetimes are
 guarantee that a newly installed higher-priority tool is visible immediately
 when PATH itself has not changed.
 
-The internal Find-CargoCommandPath -BypassCache switch skips cache reads and
-writes in both CargoTools and ProfileAccelerator. It does not refresh an existing
-entry as a side effect. The installed module must be separately deployed after
+The internal Find-CargoCommandPath -BypassCache switch skips CargoTools cache reads
+and writes, and requests a fresh lookup through ProfileAccelerator's bypass flag.
+It does not replace an existing CargoTools entry as a side effect. The inner
+implementation may invalidate its own PATH context before its fresh lookup.
+The installed module must be separately deployed after
 source review; tests of an owned command corpus do not establish a build speedup.
 
 On Windows, application lookups with relative PATH entries probe only the requested name at
@@ -409,6 +411,9 @@ and bypass the executable-only accelerator and outer cache.
 Any-command mode delegates to PowerShell and retains its own application-cache
 limitations for relative PATH directories when no function or alias wins. Only
 application-mode relative lookup is qualified by the literal-file controls.
+Global functions and aliases with no module Source or physical Path retain their
+command Name as the Any-mode identity, so presence checks remain true. This
+identifier is not a physical executable path and is never cached as one.
 Non-Windows hosts retain PowerShell application discovery, including executable
 permission checks. These Windows command fixtures do not qualify Linux/macOS.
 On an outer application-cache miss, an accelerator supporting BypassCache is
@@ -418,3 +423,6 @@ the requested command name/extension, and not be an intrinsic PowerShell script.
 Older accelerators without that switch use the uncached native lookup instead.
 Malformed Windows PATH entries are skipped with verbose diagnostics; unmounted
 drives are handled as literal filenames without provider error records.
+For absolute PATH lookups, accelerated candidate suffixes are validated against
+PATHEXT, but the accelerator's ordering between multiple valid suffixes is not
+requalified here. Its native lookup does not receive PATHEXT ordering.
