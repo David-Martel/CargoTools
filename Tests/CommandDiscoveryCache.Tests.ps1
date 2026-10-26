@@ -90,7 +90,7 @@ Describe 'Command discovery context and bounded cache on actual owned Windows pa
         Set-Location -LiteralPath $script:RootA
         Find-FixtureCommand | Should -BeExactly $first
         Push-Location 'Registry::HKEY_CURRENT_USER'
-        try { Find-FixtureCommand | Should -BeExactly $first } finally { Pop-Location }
+        try { Find-FixtureCommand -BypassCache | Should -BeExactly $first } finally { Pop-Location }
     }
 
     It 'does not return a cached executable that has been removed' {
@@ -156,13 +156,15 @@ Describe 'Command discovery context and bounded cache on actual owned Windows pa
             function script:cargo-cache-function { throw 'Fixture functions must never be invoked.' }
             Set-Alias -Name cargo-cache-alias -Value cargo-cache-function -Scope Script
             $script:CargoToolsUseProfileAccelerator = $true
-            function script:Find-CommandCached { throw 'Any-command mode must preserve PowerShell precedence.' }
-            function script:Find-CommandNative { throw 'Any-command mode must not select an application first.' }
+            function script:Find-CommandCached { param($Name,[switch]$BypassCache) $script:AnyAcceleratorCalls++; $script:AnyApplicationPath }
+            function script:Find-CommandNative { param($Name) $script:AnyAcceleratorCalls++; $script:AnyApplicationPath }
         }
+        & $script:CacheModule {param($P) $script:AnyApplicationPath=$P;$script:AnyAcceleratorCalls=0} $application
         $expected = & $script:CacheModule {param($N) Select-CargoCommandPathCandidate (Get-Command $N -ErrorAction Stop)} $Name
         $expected | Should -Not -BeNullOrEmpty
         $actual = & $script:CacheModule {param($N) Find-CargoCommandPath -Name $N -AllowNonExternal} $Name
         $actual | Should -BeExactly $expected
+        (& $script:CacheModule {$script:AnyAcceleratorCalls}) | Should -Be 0
         $actual | Should -Not -BeExactly $application
         if ($Kind -ne 'cmdlet') {
             $external = & $script:CacheModule {param($N) Find-CargoCommandPath -Name $N} $Name
@@ -226,6 +228,92 @@ Describe 'Command discovery context and bounded cache on actual owned Windows pa
         $actual = Find-FixtureCommand -Name $name
         ([StringComparer]::OrdinalIgnoreCase).Equals($actual, $expected) | Should -BeTrue
         [IO.File]::Exists($actual) | Should -BeTrue
+    }
+
+
+    It 'skips a malformed <Kind> PATH entry while finding the actual valid command' -ForEach @(
+        @{Kind='embedded-quote';Bad='bad"entry'},@{Kind='carriage-return';Bad=("bad"+[char]13+"entry")}
+    ) {
+        $expected=New-CacheCommand $script:RootA
+        $env:PATH=$Bad+[IO.Path]::PathSeparator+$script:RootA
+        $output=@(Find-FixtureCommand 2>&1)
+        $output.Count | Should -Be 1
+        $output[0] | Should -BeExactly $expected
+        @($output|Where-Object{$_-is[Management.Automation.ErrorRecord]}).Count | Should -Be 0
+    }
+
+    It 'skips an unmounted PATH drive without emitting errors or losing the valid relative entry' {
+        $bin=Join-Path $script:RootA 'bin';$expected=New-CacheCommand $bin
+        Set-Location -LiteralPath $script:RootA
+        $unused=@('Z','Y','X','W'|Where-Object{-not(Get-PSDrive -Name $_ -ErrorAction SilentlyContinue)})[0]
+        $env:PATH=$unused+':\not-mounted;./bin'
+        $output=@(& $script:CacheModule {$ErrorActionPreference='Continue';Find-CargoCommandPath -Name cargo-cache-control.cmd} 2>&1)
+        $output.Count | Should -Be 1
+        $output[0] | Should -BeExactly $expected
+        @($output|Where-Object{$_-is[Management.Automation.ErrorRecord]}).Count | Should -Be 0
+    }
+
+    # These retain the actual outer resolver. The accelerator command signature
+    # matches installed ProfileAccelerator0.4.1; only that boundary is injected.
+    # No native DLL or fake command is executed, and the seam stays enabled.
+    It 'accepts a verified accelerator candidate without reaching the native or PowerShell fallback' {
+        $expected=New-CacheCommand $script:RootA
+        & $script:CacheModule {param($P)
+            $script:CargoToolsUseProfileAccelerator=$true;$script:LayerCandidate=$P;$script:CachedCalls=0;$script:NativeCalls=0
+            function script:Find-CommandCached {param([Parameter(Mandatory)][string]$Name,[switch]$BypassCache)$script:CachedCalls++;$script:LayerCandidate}
+            function script:Find-CommandNative {param($Name)$script:NativeCalls++;$null}
+        } $expected
+        Find-FixtureCommand | Should -BeExactly $expected
+        (& $script:CacheModule {$script:CachedCalls}) | Should -Be 1
+        (& $script:CacheModule {$script:NativeCalls}) | Should -Be 0
+    }
+
+    It 'does not re-admit a deleted path returned by both enabled accelerator layers' {
+        $expected=New-CacheCommand $script:RootA
+        & $script:CacheModule {param($P)
+            $script:CargoToolsUseProfileAccelerator=$true;$script:LayerCandidate=$P
+            function script:Find-CommandCached {param([Parameter(Mandatory)][string]$Name,[switch]$BypassCache)$script:LayerCandidate}
+            function script:Find-CommandNative {param($Name)$script:LayerCandidate}
+        } $expected
+        Find-FixtureCommand | Should -BeExactly $expected
+        [IO.File]::Delete($expected)
+        Find-FixtureCommand | Should -BeNullOrEmpty
+    }
+
+    It 'refreshes an expired outer positive through the actual cache-bypass signature' {
+        $second=New-CacheCommand $script:RootB
+        $env:PATH=$script:RootA+[IO.Path]::PathSeparator+$script:RootB
+        & $script:CacheModule {param($P)
+            $script:CargoToolsUseProfileAccelerator=$true;$script:InnerCached=$P;$script:InnerFresh=$P;$script:LastBypass=$false
+            function script:Find-CommandCached {param([Parameter(Mandatory)][string]$Name,[switch]$BypassCache)$script:LastBypass=[bool]$BypassCache;if($BypassCache){$script:InnerFresh}else{$script:InnerCached}}
+            function script:Find-CommandNative {param($Name)$script:InnerFresh}
+        } $second
+        Find-FixtureCommand | Should -BeExactly $second
+        $first=New-CacheCommand $script:RootA
+        & $script:CacheModule {param($P)$script:InnerFresh=$P;$script:CargoToolsCommandPathCache['exe::cargo-cache-control.cmd'].ExpiresUtc=[DateTime]::UtcNow.AddSeconds(-1)} $first
+        Find-FixtureCommand | Should -BeExactly $first
+        (& $script:CacheModule {$script:LastBypass}) | Should -BeTrue
+    }
+
+    It 'rejects an existing wrong-name accelerator candidate and returns the actual requested application' {
+        $expected=New-CacheCommand $script:RootA
+        $wrong=New-CacheCommand $script:RootA 'wrong-command.cmd'
+        & $script:CacheModule {param($P)
+            $script:CargoToolsUseProfileAccelerator=$true;$script:WrongCandidate=$P;$script:CachedCalls=0;$script:NativeCalls=0
+            function script:Find-CommandCached {param([Parameter(Mandatory)][string]$Name,[switch]$BypassCache)$script:CachedCalls++;$script:WrongCandidate}
+            function script:Find-CommandNative {param($Name)$script:NativeCalls++;$script:WrongCandidate}
+        } $wrong
+        Find-FixtureCommand | Should -BeExactly $expected
+        (& $script:CacheModule {$script:CachedCalls}) | Should -Be 1
+        (& $script:CacheModule {$script:NativeCalls}) | Should -Be 1
+    }
+
+    It 'preserves directory priority before extension priority across relative and absolute PATH entries' {
+        $bin=Join-Path $script:RootA 'bin';$expected=New-CacheCommand $bin
+        $null=New-CacheCommand $script:RootB 'cargo-cache-control.exe'
+        Set-Location -LiteralPath $script:RootA
+        $env:PATH='./bin'+[IO.Path]::PathSeparator+$script:RootB;$env:PATHEXT='.EXE;.CMD'
+        Find-FixtureCommand | Should -BeExactly $expected
     }
 
 }

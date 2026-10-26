@@ -411,3 +411,10 @@ limitations for relative PATH directories when no function or alias wins. Only
 application-mode relative lookup is qualified by the literal-file controls.
 Non-Windows hosts retain PowerShell application discovery, including executable
 permission checks. These Windows command fixtures do not qualify Linux/macOS.
+On an outer application-cache miss, an accelerator supporting BypassCache is
+queried fresh so its own positive cache cannot re-admit removed paths or extend
+the outer lifetime. Every accelerated application candidate must exist, match
+the requested command name/extension, and not be an intrinsic PowerShell script.
+Older accelerators without that switch use the uncached native lookup instead.
+Malformed Windows PATH entries are skipped with verbose diagnostics; unmounted
+drives are handled as literal filenames without provider error records.

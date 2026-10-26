@@ -449,6 +449,18 @@ Describe 'Resolve-NasmPath' {
 }
 
 Describe 'Resolve-CacheRoot' {
+    BeforeEach {
+        $script:SavedCacheRootOverrides = @{}
+        foreach ($name in @('CARGOTOOLS_CACHE_ROOT', 'PCAI_CACHE_ROOT')) {
+            $script:SavedCacheRootOverrides[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+        }
+    }
+    AfterEach {
+        foreach ($name in $script:SavedCacheRootOverrides.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $script:SavedCacheRootOverrides[$name], 'Process')
+        }
+    }
     It 'Returns T:\RustCache when T: exists' {
         if (Test-Path 'T:\') {
             $result = & $script:ResolveCacheRoot

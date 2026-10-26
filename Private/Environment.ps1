@@ -170,6 +170,25 @@ function Select-CargoCommandPathCandidate {
     return $null
 }
 
+function Test-CargoApplicationCandidate {
+    [CmdletBinding()]
+    param([AllowNull()][string]$Candidate, [Parameter(Mandatory)][string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Candidate) -or -not [IO.File]::Exists($Candidate)) { return $false }
+    try {
+        if ([IO.Path]::GetExtension($Candidate) -ieq '.ps1') { return $false }
+        $leaf = [IO.Path]::GetFileName($Candidate)
+        $comparison = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            [StringComparison]::OrdinalIgnoreCase
+        } else { [StringComparison]::Ordinal }
+        if ($leaf.Equals($Name, $comparison)) { return $true }
+        foreach ($extension in @([string]$env:PATHEXT -split [IO.Path]::PathSeparator | Where-Object { $_ })) {
+            if ($leaf.Equals(($Name + $extension), $comparison)) { return $true }
+        }
+    } catch { return $false }
+    return $false
+}
+
 function Find-CargoCommandPath {
     [CmdletBinding()]
     param(
@@ -215,10 +234,16 @@ function Find-CargoCommandPath {
     }
 
     $resolved = $null
-    $pathDirectories = @([string]$env:PATH -split [IO.Path]::PathSeparator | Where-Object { $_ })
+    $pathDirectories = @()
     $hasRelativePath = $false
-    foreach ($directory in $pathDirectories) {
-        if (-not [IO.Path]::IsPathRooted($directory.Trim('"'))) { $hasRelativePath = $true; break }
+    if (-not $AllowNonExternal -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        foreach ($entry in @([string]$env:PATH -split [IO.Path]::PathSeparator | Where-Object { $_ })) {
+            $directory = $entry.Trim('"')
+            try { $rooted = [IO.Path]::IsPathRooted($directory) }
+            catch { Write-Verbose 'Ignoring an invalid PATH entry during command discovery.'; continue }
+            $pathDirectories += $directory
+            if (-not $rooted) { $hasRelativePath = $true }
+        }
     }
     if ($hasRelativePath -and -not $AllowNonExternal -and
         [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
@@ -230,9 +255,9 @@ function Find-CargoCommandPath {
         $extensions = @([string]$env:PATHEXT -split [IO.Path]::PathSeparator | Where-Object { $_ })
         foreach ($directory in $pathDirectories) {
             $directory = $directory.Trim('"')
-            if (-not [IO.Path]::IsPathRooted($directory)) { $directory = Join-Path $fileSystemCwd $directory }
             try {
-                $candidate = Join-Path $directory $Name
+                if (-not [IO.Path]::IsPathRooted($directory)) { $directory = [IO.Path]::Combine($fileSystemCwd, $directory) }
+                $candidate = [IO.Path]::Combine($directory, $Name)
                 # Get-Command treats brackets in a qualified name as wildcards.
                 # Literal named-file probes preserve PATH/PATHEXT order without
                 # selecting a similarly named sibling or invoking any command.
@@ -258,12 +283,19 @@ function Find-CargoCommandPath {
         # Functions, aliases and cmdlets use PowerShell's precedence directly;
         # an executable-only accelerator cannot establish that command identity.
         if (-not $AllowNonExternal) { Initialize-CargoToolsCommandAcceleration | Out-Null }
-        if (-not $AllowNonExternal -and $script:CargoToolsUseProfileAccelerator -and (Get-Command Find-CommandCached -ErrorAction SilentlyContinue)) {
-            try { $resolved = Select-CargoCommandPathCandidate (Find-CommandCached -Name $Name -BypassCache:$BypassCache) } catch { $resolved = $null }
+        if (-not $AllowNonExternal -and $script:CargoToolsUseProfileAccelerator) {
+            $cachedLookup = Get-Command Find-CommandCached -ErrorAction SilentlyContinue
+            if ($cachedLookup -and $cachedLookup.Parameters.ContainsKey('BypassCache')) {
+                # An outer miss must be fresh. Reusing an inner positive would
+                # re-admit removed paths or extend the outer expiry contract.
+                try { $resolved = Select-CargoCommandPathCandidate (& $cachedLookup -Name $Name -BypassCache) } catch { $resolved = $null }
+                if (-not (Test-CargoApplicationCandidate -Candidate $resolved -Name $Name)) { $resolved = $null }
+            }
         }
 
         if (-not $resolved -and -not $AllowNonExternal -and $script:CargoToolsUseProfileAccelerator -and (Get-Command Find-CommandNative -ErrorAction SilentlyContinue)) {
             try { $resolved = Select-CargoCommandPathCandidate (Find-CommandNative -Name $Name) } catch { $resolved = $null }
+            if (-not (Test-CargoApplicationCandidate -Candidate $resolved -Name $Name)) { $resolved = $null }
         }
 
         if (-not $resolved) {
@@ -280,6 +312,7 @@ function Find-CargoCommandPath {
     }
 
     $resolved = Select-CargoCommandPathCandidate $resolved
+    if (-not $AllowNonExternal -and -not (Test-CargoApplicationCandidate -Candidate $resolved -Name $Name)) { $resolved = $null }
 
     if (-not $BypassCache -and -not $AllowNonExternal) {
         # Reuse ProfileAccelerator's bounded positive/miss lifetimes; the outer
