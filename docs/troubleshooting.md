@@ -385,3 +385,29 @@ See also:
 - [`wrappers.md`](wrappers.md) — full CLI reference and JSON envelope schema.
 - [`../CLAUDE.md`](../CLAUDE.md) — module architecture, env vars, design decisions.
 - [`../CHANGELOG.md`](../CHANGELOG.md) — version history.
+
+## Command discovery after a toolchain or PATH change
+
+CargoTools keeps a process-local application lookup cache. It invalidates entries
+when PATH, PATHEXT, or the current filesystem directory changes. Provider-only
+location changes (for example Registry:) retain the last filesystem directory.
+Explicit paths are resolved on every call. Removed positive paths are rechecked;
+otherwise positive entries expire after 300 seconds and misses after 8 seconds,
+using ProfileAccelerator's default bounded lookup lifetimes. These lifetimes are not a
+guarantee that a newly installed higher-priority tool is visible immediately
+when PATH itself has not changed.
+
+The internal Find-CargoCommandPath -BypassCache switch skips cache reads and
+writes in both CargoTools and ProfileAccelerator. It does not refresh an existing
+entry as a side effect. The installed module must be separately deployed after
+source review; tests of an owned command corpus do not establish a build speedup.
+
+On Windows, application lookups with relative PATH entries probe only the requested name at
+each explicit filesystem directory, avoiding PowerShell's stale relative-name
+cache. Any-command lookups retain PowerShell function/alias/cmdlet precedence
+and bypass the executable-only accelerator and outer cache.
+Any-command mode delegates to PowerShell and retains its own application-cache
+limitations for relative PATH directories when no function or alias wins. Only
+application-mode relative lookup is qualified by the literal-file controls.
+Non-Windows hosts retain PowerShell application discovery, including executable
+permission checks. These Windows command fixtures do not qualify Linux/macOS.
