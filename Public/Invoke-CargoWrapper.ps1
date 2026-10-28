@@ -12,6 +12,28 @@ Invoke-CargoWrapper --wrapper-help
 Invoke-CargoWrapper -ArgumentList @('--raw', 'test', 'filter', '--', '--nocapture')
 Use an explicit array when passing a Cargo argument separator. PowerShell consumes
 an unquoted -- token during advanced-function parameter binding.
+.EXAMPLE
+pwsh -NoProfile -c "Import-Module CargoTools; Invoke-CargoWrapper check && Invoke-CargoWrapper clippy --all-targets -- -D warnings"
+Build gate. A non-zero cargo result makes the call write a non-terminating error, so `$?` is
+false, `&&` stops the chain and the process exits 1.
+.EXAMPLE
+pwsh -NoProfile -c "Import-Module CargoTools; Invoke-CargoWrapper test; exit `$LASTEXITCODE"
+Exits with cargo's own code (for example 101 for a failed test run).
+.OUTPUTS
+System.Int32. The exit code of the last command the wrapper ran (0 on success).
+.NOTES
+Status contract: the exit code is returned as the last output item and published in
+$LASTEXITCODE. A non-zero code also writes a non-terminating error (ErrorId
+CargoToolsNonZeroExit, TargetObject = the exit code) so `$?` is $false. That is what
+`pwsh -Command`, `&&` and `if ($?)` read; LASTEXITCODE alone does not fail a -Command process.
+The process exit code is then 1; use "; exit `$LASTEXITCODE" for the exact cargo code.
+The error does not become an exception for callers that set $ErrorActionPreference = 'Stop';
+pass -ErrorAction Stop explicitly to get one, or -ErrorAction SilentlyContinue to hide the
+message while keeping `$?` false.
+Separate statements joined with ';' are independent: -Command reflects only the last one, so a
+failure in an earlier statement is masked. Chain gates with '&&' (PowerShell 7+) or test `$?`.
+PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineVariable,
+-ProgressAction); write '--package' or pass -ArgumentList @('-p', 'name').
 #>
     [CmdletBinding(DefaultParameterSetName = 'Args')]
     param(
@@ -31,6 +53,7 @@ an unquoted -- token during advanced-function parameter binding.
     # Publish the wrapper outcome after diagnostics and queue cleanup, which may
     # run native tools and overwrite LASTEXITCODE. Exceptions default to failure.
     $wrapperExitCode = 1
+    $wrapperThrew = $false
     try {
     $rawArgs = if ($PSCmdlet.ParameterSetName -eq 'Named') {
         $argsList = New-Object System.Collections.Generic.List[string]
@@ -876,8 +899,23 @@ an unquoted -- token during advanced-function parameter binding.
     }
     } catch {
         $wrapperExitCode = 1
+        $wrapperThrew = $true
         throw
     } finally {
         $global:LASTEXITCODE = $wrapperExitCode
+        # `pwsh -Command` (and `&&`, `if ($?)`) read `$?`, not LASTEXITCODE, so a bare return
+        # value let a failed build or test run exit 0. Raise a non-terminating error so `$?` is
+        # false. A thrown exception already fails `$?`, so it is not reported twice.
+        if (-not $wrapperThrew -and $wrapperExitCode -ne 0) {
+            # The wrapper scripts and callers run with $ErrorActionPreference = 'Stop' and read the
+            # returned code. Do not turn that status into an exception unless the caller asked for
+            # one with an explicit -ErrorAction.
+            if (-not $PSBoundParameters.ContainsKey('ErrorAction')) { $ErrorActionPreference = 'Continue' }
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                [System.InvalidOperationException]::new("cargo wrapper exited with code $wrapperExitCode."),
+                'CargoToolsNonZeroExit',
+                [System.Management.Automation.ErrorCategory]::InvalidResult,
+                $wrapperExitCode))
+        }
     }
 }
