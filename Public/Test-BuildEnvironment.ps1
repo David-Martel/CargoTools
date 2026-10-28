@@ -172,9 +172,7 @@ function Test-BuildEnvironment {
     } else { 'None' }
 
     # --- Global config files ---
-    # An explicit CARGO_HOME is authoritative (Cargo reads it even if it does not exist yet); the
-    # fallback chain only applies when it is unset.
-    $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Resolve-CargoToolsFastCargoHome }
+    $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $HOME '.cargo' }
     $cargoConfigPath = Join-Path $cargoHome 'config.toml'
     if (Test-Path $cargoConfigPath) {
         $cargoConfig = Read-TomlSections -Path $cargoConfigPath

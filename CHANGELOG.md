@@ -27,8 +27,6 @@
   - `Get-MachineConfig` keeps the usable local default for any registry path in the
     RustCache layout whose drive is not mounted, so a registered Dev Drive profile cannot
     point `Initialize-CargoEnv` at an absent `T:\`.
-  - `Test-BuildEnvironment` keeps an explicit `CARGO_HOME` authoritative and uses the
-    cache-aware fallback chain only when it is unset.
   Covered by `Tests/CacheDriveFallback.Tests.ps1`.
 - **Fix: `Invoke-CargoWrapper` now fails `$?` when cargo fails.** The exit code used to
   reach callers only through the output stream and `$LASTEXITCODE`, so
