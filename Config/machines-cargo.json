@@ -11,6 +11,28 @@
     "Hostname": "DTM-WORK",
     "CargoTargetDir": "T:\\RustCache\\cargo-target"
   },
+  "DTM-P1GEN9": {
+    "GpuName": "NVIDIA RTX PRO 2000 Blackwell Generation Laptop GPU",
+    "CargoHome": "T:\\RustCache\\cargo-home",
+    "CudaComputeCap": "120",
+    "CacheRoot": "T:\\RustCache",
+    "SccacheCacheSize": "30G",
+    "BuildJobs": 16,
+    "WindowsSdkUcrtLib": "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.26100.0\\ucrt\\x64",
+    "LastSeen": "2026-10-18T15:51:00-04:00",
+    "GpuMemoryMB": 8151,
+    "WindowsSdkUmLib": "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.26100.0\\um\\x64",
+    "RustupHome": "T:\\RustCache\\rustup",
+    "CargoTargetDir": "T:\\RustCache\\cargo-target",
+    "Hostname": "DTM-P1GEN9",
+    "SccacheDir": "T:\\RustCache\\sccache",
+    "WindowsSdkVersion": "10.0.26100.0",
+    "SccacheIdleTimeout": "3600",
+    "QueueStaleMinutes": 240,
+    "TargetMode": "local",
+    "QueuePollIntervalMs": 500,
+    "MaxConcurrentBuilds": 1
+  },
   "DTM-CARBON-TWO": {
     "VsPath": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community",
     "QueueStaleMinutes": 240,

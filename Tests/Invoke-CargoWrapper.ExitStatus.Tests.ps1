@@ -29,6 +29,14 @@ BeforeAll {
     $env:RUSTC_WRAPPER = ''
     $env:CARGO_TARGET_DIR = Join-Path $TestDrive 'target'
 
+    # Raw mode does not sanitise PATH. A GNU coreutils `link.exe` earlier on PATH than the MSVC
+    # linker (for example from ~/bin) makes rustc call the wrong `link`, so the throwaway crates
+    # would fail to link for a reason unrelated to the wrapper. Hand the child a PATH without
+    # directories that hold a non-MSVC link.exe; hosts without such a shadow are unchanged.
+    $script:childPath = (($env:PATH -split ';') | Where-Object {
+        $_ -and -not ((Test-Path -LiteralPath (Join-Path $_ 'link.exe') -ErrorAction SilentlyContinue) -and $_ -notmatch 'MSVC|Visual Studio')
+    }) -join ';'
+
     function New-ThrowawayCrate {
         param([string]$Name, [string]$TestBody)
         $dir = Join-Path $TestDrive $Name
@@ -43,12 +51,15 @@ BeforeAll {
     function Invoke-ChildPwsh {
         param([string]$Directory, [string]$Command)
         $ErrorActionPreference = 'Continue'
+        $savedPath = $env:PATH
+        $env:PATH = $script:childPath
         Push-Location -LiteralPath $Directory
         try {
             $output = & $script:pwsh -NoLogo -NoProfile -NonInteractive -Command $Command 2>&1 | ForEach-Object { "$_" }
             [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = @($output) }
         } finally {
             Pop-Location
+            $env:PATH = $savedPath
         }
     }
 

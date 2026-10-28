@@ -67,6 +67,74 @@ function Resolve-CargoToolsFastRustupHome {
     return (Join-Path $HOME '.rustup')
 }
 
+function Resolve-CargoToolsUnavailableCacheValue {
+    <#
+    .SYNOPSIS
+    Decides whether a cache path variable must move off a drive that is not mounted.
+    .DESCRIPTION
+    Returns the replacement path, or $null when the value must be left alone. A value is replaced
+    only when ALL of these hold, so an explicit caller choice always survives:
+      - it has a drive-letter root (UNC and relative paths are never touched);
+      - that root is not present (-TestRoot returns $false);
+      - it lies in the RustCache layout CargoTools creates (<drive>:\RustCache or below).
+    The replacement is the persisted user value when that is usable (no drive root, or a present
+    root), otherwise -Fallback.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Value,
+        [string]$PersistedValue,
+        [Parameter(Mandatory)][string]$Fallback,
+        [scriptblock]$TestRoot = { param($root) Test-Path -LiteralPath $root }
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
+    if ($Value -notmatch '^([A-Za-z]:\\)') { return $null }
+    if (& $TestRoot $Matches[1]) { return $null }
+    if ($Value -notmatch '^[A-Za-z]:\\RustCache(\\|$)') { return $null }
+
+    if (-not [string]::IsNullOrWhiteSpace($PersistedValue) -and $PersistedValue -ne $Value) {
+        if ($PersistedValue -notmatch '^([A-Za-z]:\\)' -or (& $TestRoot $Matches[1])) {
+            return $PersistedValue
+        }
+    }
+    return $Fallback
+}
+
+function Repair-CargoToolsCacheEnvironment {
+    <#
+    .SYNOPSIS
+    Moves CARGO_HOME, RUSTUP_HOME and SCCACHE_DIR off an unmounted cache drive for this process.
+    .DESCRIPTION
+    A persisted T:\RustCache\... value is inherited by every new process, so with the Dev Drive
+    not mounted each build would fail. This rewrites the PROCESS value only (never the user or
+    machine scope) using Resolve-CargoToolsUnavailableCacheValue. Returns one object per change.
+    #>
+    [CmdletBinding()]
+    param(
+        [scriptblock]$GetPersistedValue = { param($name) [Environment]::GetEnvironmentVariable($name, 'User') }
+    )
+
+    $targets = @(
+        @{ Name = 'CARGO_HOME'; Fallback = (Join-Path $HOME '.cargo') }
+        @{ Name = 'RUSTUP_HOME'; Fallback = (Join-Path $HOME '.rustup') }
+        @{ Name = 'SCCACHE_DIR'; Fallback = (Join-Path $env:LOCALAPPDATA 'RustCache\sccache') }
+    )
+    foreach ($target in $targets) {
+        $current = [Environment]::GetEnvironmentVariable($target.Name, 'Process')
+        $replacement = Resolve-CargoToolsUnavailableCacheValue -Value $current `
+            -PersistedValue (& $GetPersistedValue $target.Name) -Fallback $target.Fallback
+        if ($replacement) {
+            [Environment]::SetEnvironmentVariable($target.Name, $replacement, 'Process')
+            Write-Verbose "$($target.Name): cache drive for '$current' is not available, using '$replacement'"
+            [pscustomobject]@{ Name = $target.Name; Previous = $current; Value = $replacement }
+        }
+    }
+}
+
+# Runs at import so the first Resolve-*/Initialize-CargoEnv call already sees a usable path.
+try { $null = Repair-CargoToolsCacheEnvironment } catch { Write-Verbose "Cache environment repair skipped: $_" }
+
 function Import-CargoToolsAccelerationStack {
     if (Get-Variable -Name CargoToolsAccelerationBootstrapStatus -Scope Script -ErrorAction SilentlyContinue) {
         return $script:CargoToolsAccelerationBootstrapStatus

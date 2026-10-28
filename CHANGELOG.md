@@ -11,6 +11,23 @@
 - **Pester test suite**: New `Tests/Wrappers.Tests.ps1` covering flag parsing, LlmEvent JSON shape, MODULE_NOT_FOUND recovery, argument pass-through fidelity, per-wrapper --help/--version/--list-wrappers, and --doctor JSON schema.
 
 ## Unreleased
+- **DTM-P1GEN9 Dev Drive profile and cache-drive fallback** (rebuilt from the unique parts
+  of PR #15 on top of current main; the NUC entry there is superseded by #16 and was not
+  carried over).
+  - `Config/machines-cargo.json` registers DTM-P1GEN9 with its `T:\RustCache` Dev Drive
+    layout, so a fresh deploy keeps the profile instead of re-deriving it.
+  - Default cache-drive selection only accepts a ready, local, fixed drive
+    (`Test-CargoToolsLocalCacheDrive`). Mapped rclone/FUSE drives report `Fixed`, so the
+    drive type alone is not enough.
+  - At import, `CARGO_HOME`, `RUSTUP_HOME` and `SCCACHE_DIR` that point into a
+    `<drive>:\RustCache` folder on a drive that is not mounted move, for the process only,
+    to the persisted user value if usable, otherwise `~\.cargo`, `~\.rustup` or
+    `%LOCALAPPDATA%\RustCache\sccache`. Paths outside the RustCache layout, UNC paths and
+    present drives are never touched. The user and machine scopes are never written.
+  - `Get-MachineConfig` keeps the usable local default for any registry path in the
+    RustCache layout whose drive is not mounted, so a registered Dev Drive profile cannot
+    point `Initialize-CargoEnv` at an absent `T:\`.
+  Covered by `Tests/CacheDriveFallback.Tests.ps1`.
 - **Fix: `Invoke-CargoWrapper` now fails `$?` when cargo fails.** The exit code used to
   reach callers only through the output stream and `$LASTEXITCODE`, so
   `pwsh -c "Import-Module CargoTools; Invoke-CargoWrapper test"` exited 0 even with
