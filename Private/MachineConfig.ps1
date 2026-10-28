@@ -67,6 +67,14 @@ function Get-MachineConfig {
                         $config[$prop.Name] = $prop.Value
                     }
                 }
+                # A registry entry written for a Dev Drive must not outlive the drive: when its
+                # RustCache path is on a drive that is not mounted, keep the usable default.
+                foreach ($pathKey in 'CacheRoot', 'CargoHome', 'RustupHome', 'CargoTargetDir', 'SccacheDir') {
+                    if ($defaults.ContainsKey($pathKey) -and $config[$pathKey] -is [string]) {
+                        $usable = Resolve-CargoToolsUnavailableCacheValue -Value $config[$pathKey] -Fallback $defaults[$pathKey]
+                        if ($usable) { $config[$pathKey] = $usable }
+                    }
+                }
                 $script:MachineConfig = $config
                 return $config
             }

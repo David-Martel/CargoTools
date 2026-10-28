@@ -261,3 +261,56 @@ Describe 'Tracked machine registry (Config/machines-cargo.json)' {
         }
     }
 }
+
+Describe 'Get-MachineConfig with the registered Dev Drive unmounted' {
+    BeforeEach {
+        $script:localRoot = Join-Path $TestDrive 'local\RustCache'
+        Mock Get-MachineIdentity -ModuleName CargoTools { 'DTM-P1GEN9' }
+        $root = $script:localRoot   # closures capture locals, not $script: variables
+        Mock Get-DefaultMachineConfig -ModuleName CargoTools {
+            @{
+                CacheRoot = $root; CargoHome = "$root\cargo-home"; RustupHome = "$root\rustup"
+                CargoTargetDir = "$root\cargo-target"; SccacheDir = "$root\sccache"; BuildJobs = 4
+            }
+        }.GetNewClosure()
+        Mock Register-CurrentMachine -ModuleName CargoTools { throw 'a known machine must not be re-registered' }
+    }
+    AfterEach { & $script:module { $script:MachineConfig = $null } }
+
+    It 'keeps the usable local defaults for every path when T: is not mounted' {
+        Mock Test-Path -ModuleName CargoTools { $false } -ParameterFilter { $LiteralPath -eq 'T:\' }
+        $config = & $script:module { Get-MachineConfig -Force }
+        $config['CacheRoot'] | Should -Be $script:localRoot
+        $config['CargoHome'] | Should -Be "$script:localRoot\cargo-home"
+        $config['RustupHome'] | Should -Be "$script:localRoot\rustup"
+        $config['CargoTargetDir'] | Should -Be "$script:localRoot\cargo-target"
+        $config['SccacheDir'] | Should -Be "$script:localRoot\sccache"
+        $config['BuildJobs'] | Should -Be 16 -Because 'only the unavailable paths fall back; other registry values still apply'
+    }
+
+    It 'uses the registered T:\RustCache paths when T: is mounted (positive control)' {
+        Mock Test-Path -ModuleName CargoTools { $true } -ParameterFilter { $LiteralPath -eq 'T:\' }
+        $config = & $script:module { Get-MachineConfig -Force }
+        $config['CacheRoot'] | Should -Be 'T:\RustCache'
+        $config['CargoHome'] | Should -Be 'T:\RustCache\cargo-home'
+        $config['SccacheDir'] | Should -Be 'T:\RustCache\sccache'
+    }
+}
+
+Describe 'Test-BuildEnvironment cargo home' {
+    BeforeAll { $script:savedCargoHome = $env:CARGO_HOME }
+    AfterAll { $env:CARGO_HOME = $script:savedCargoHome }
+    BeforeEach { Mock Resolve-CargoToolsFastCargoHome -ModuleName CargoTools { Join-Path $TestDrive 'resolved' } }
+
+    It 'keeps an explicit CARGO_HOME authoritative even when it does not exist yet' {
+        $env:CARGO_HOME = Join-Path $TestDrive 'explicit-but-missing'
+        $null = Test-BuildEnvironment -Detailed *>&1
+        Should -Invoke Resolve-CargoToolsFastCargoHome -ModuleName CargoTools -Times 0 -Exactly
+    }
+
+    It 'resolves a cargo home through the fallback chain when CARGO_HOME is unset (positive control)' {
+        Remove-Item Env:CARGO_HOME -ErrorAction SilentlyContinue
+        $null = Test-BuildEnvironment -Detailed *>&1
+        Should -Invoke Resolve-CargoToolsFastCargoHome -ModuleName CargoTools -Times 1 -Exactly
+    }
+}
