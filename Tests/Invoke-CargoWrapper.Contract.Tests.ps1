@@ -63,6 +63,9 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
         $env:CARGOTOOLS_CONTRACT_EXIT = '37'
         Remove-Item -LiteralPath $env:CARGOTOOLS_CONTRACT_LOG -ErrorAction SilentlyContinue
         $global:LASTEXITCODE = 0
+        # Failure statuses now also write a CargoToolsNonZeroExit error. Keep the console quiet;
+        # -ErrorVariable still records it and an explicit -ErrorAction Stop still overrides this.
+        $PSDefaultParameterValues['Invoke-CargoWrapper:ErrorAction'] = 'SilentlyContinue'
         Mock Resolve-CacheRoot -ModuleName CargoTools { $TestDrive }
         Mock Ensure-MsvcEnv -ModuleName CargoTools {}
         Mock Initialize-CargoEnv -ModuleName CargoTools {}
@@ -245,6 +248,51 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
         $result[-1] | Should -Be 1
         $global:LASTEXITCODE | Should -Be 1
         @(Read-NativeCall).Count | Should -Be 0
+    }
+
+    # `pwsh -Command`, `&&` and `if ($?)` read `$?`, not LASTEXITCODE. Process-level coverage,
+    # including callers that run under $ErrorActionPreference = 'Stop', is in
+    # Invoke-CargoWrapper.ExitStatus.Tests.ps1.
+    It 'fails $? with a non-terminating CargoToolsNonZeroExit error for <Case>' -ForEach @(
+        @{ Case = 'a raw native failure'; Arguments = @('--raw', 'test'); Expected = 37 }
+        @{ Case = 'a failed quality gate'; Arguments = @('test'); Expected = 37; FailCommand = 'clippy'; Gate = $true }
+    ) {
+        if ($Gate) {
+            $env:CARGOTOOLS_AUTO_FIX = '1'
+            Mock Apply-PreflightEnvDefaults -ModuleName CargoTools { @{ Enabled = $true; RA = $false; Blocking = $true } }
+        }
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = if ($FailCommand) { $FailCommand } else { 'test' }
+        $result = @(Invoke-CargoWrapper -ArgumentList $Arguments -ErrorVariable wrapperErrors 2>$null)
+        $succeeded = $?
+        $result[-1] | Should -Be $Expected
+        $global:LASTEXITCODE | Should -Be $Expected
+        $succeeded | Should -BeFalse
+        @($wrapperErrors).Count | Should -Be 1
+        $wrapperErrors[0].FullyQualifiedErrorId | Should -Match '^CargoToolsNonZeroExit'
+        $wrapperErrors[0].TargetObject | Should -Be $Expected
+    }
+
+    It 'keeps $? true and writes no error on success' {
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        $result = @(Invoke-CargoWrapper -ArgumentList @('--raw', 'test') -ErrorVariable wrapperErrors)
+        $succeeded = $?
+        $result[-1] | Should -Be 0
+        $succeeded | Should -BeTrue
+        @($wrapperErrors).Count | Should -Be 0
+    }
+
+    It 'raises the failure as an exception only when the caller passes -ErrorAction Stop' {
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'test'
+        { Invoke-CargoWrapper -ArgumentList @('--raw', 'test') -ErrorAction Stop } | Should -Throw '*cargo wrapper exited with code 37*'
+        $global:LASTEXITCODE | Should -Be 37
+    }
+
+    It 'does not report an exception failure twice' {
+        Mock Initialize-CargoEnv -ModuleName CargoTools { throw 'fixture setup failure' }
+        $caught = $null
+        try { Invoke-CargoWrapper -ArgumentList @('test') -ErrorVariable wrapperErrors } catch { $caught = $_ }
+        $caught.Exception.Message | Should -BeLike '*fixture setup failure*'
+        @($wrapperErrors | Where-Object { $_.FullyQualifiedErrorId -like 'CargoToolsNonZeroExit*' }).Count | Should -Be 0
     }
 
     It 'publishes missing raw toolchain failure without stale success' {

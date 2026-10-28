@@ -11,6 +11,18 @@
 - **Pester test suite**: New `Tests/Wrappers.Tests.ps1` covering flag parsing, LlmEvent JSON shape, MODULE_NOT_FOUND recovery, argument pass-through fidelity, per-wrapper --help/--version/--list-wrappers, and --doctor JSON schema.
 
 ## Unreleased
+- **Fix: `Invoke-CargoWrapper` now fails `$?` when cargo fails.** The exit code used to
+  reach callers only through the output stream and `$LASTEXITCODE`, so
+  `pwsh -c "Import-Module CargoTools; Invoke-CargoWrapper test"` exited 0 even with
+  failing tests or a failed build, and the documented build gate could not fail. A
+  non-zero result now also writes a non-terminating `CargoToolsNonZeroExit` error:
+  `$?` is false, `&&` short-circuits and `-Command` exits 1 (use
+  `; exit $LASTEXITCODE` for the exact code). Callers running under
+  `$ErrorActionPreference = 'Stop'` (the wrapper scripts, Pester) still receive the
+  returned code instead of an exception. Plain `;` chains remain independent in
+  PowerShell: chain gates with `&&`. Covered by
+  `Tests/Invoke-CargoWrapper.ExitStatus.Tests.ps1`. Documents that `-p` is ambiguous
+  in PowerShell (`--package` works).
 - **Queued top-level builds**: Added `Private/BuildQueue.ps1` and public
   `Get-CargoQueueStatus` to serialize top-level Cargo invocations through a
   shared queue. Wrapper status output now reports when a build is queued and
