@@ -81,6 +81,27 @@ function Get-MachineConfig {
     return $defaults
 }
 
+function Test-CargoToolsLocalCacheDrive {
+    <#
+    .SYNOPSIS
+    True when a drive is a ready, local, fixed disk that can host the Cargo caches.
+    .DESCRIPTION
+    DriveType 'Fixed' is necessary but not sufficient: FUSE/rclone, WinFsp, Dokan and similar
+    mounts are reported as Fixed. Their file system names identify them, so those are rejected.
+    #>
+    [CmdletBinding()]
+    param([AllowNull()]$DriveInfo)
+
+    if ($null -eq $DriveInfo) { return $false }
+    try {
+        if (-not $DriveInfo.IsReady) { return $false }
+        if ($DriveInfo.DriveType -ne [System.IO.DriveType]::Fixed) { return $false }
+        return ($DriveInfo.DriveFormat -notmatch 'FUSE|rclone|WinFsp|Dokan|WebDAV|NFS|9p|vboxsf|vmhgfs')
+    } catch {
+        return $false
+    }
+}
+
 function Get-DefaultMachineConfig {
     <#
     .SYNOPSIS
@@ -88,10 +109,13 @@ function Get-DefaultMachineConfig {
     #>
     $config = @{}
 
-    # Determine cache root: prefer T: (Dev Drive/ReFS), then D:, then local
-    if (Test-Path 'T:\') {
+    # Determine cache root: prefer a local T: (Dev Drive/ReFS), then a local D:, then LOCALAPPDATA.
+    # Mapped rclone/FUSE drives report DriveType 'Fixed', so the type alone is not enough.
+    $tFixed = (Test-Path 'T:\') -and (Test-CargoToolsLocalCacheDrive -DriveInfo ([System.IO.DriveInfo]'T:'))
+    $dFixed = (Test-Path 'D:\') -and (Test-CargoToolsLocalCacheDrive -DriveInfo ([System.IO.DriveInfo]'D:'))
+    if ($tFixed) {
         $config['CacheRoot'] = 'T:\RustCache'
-    } elseif (Test-Path 'D:\') {
+    } elseif ($dFixed) {
         $config['CacheRoot'] = 'D:\RustCache'
     } else {
         $config['CacheRoot'] = Join-Path $env:LOCALAPPDATA 'RustCache'
