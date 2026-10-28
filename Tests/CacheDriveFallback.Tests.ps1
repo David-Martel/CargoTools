@@ -84,7 +84,8 @@ Describe 'Get-DefaultMachineConfig cache root' {
         (& $script:module { Get-DefaultMachineConfig })['CacheRoot'] | Should -Be (Join-Path $env:LOCALAPPDATA 'RustCache')
     }
 
-    It 'falls back to D:\RustCache when only D: is a local cache drive' {
+    # Join-Path needs a registered D: PSDrive; a host without one cannot exercise this branch.
+    It 'falls back to D:\RustCache when only D: is a local cache drive' -Skip:(-not (Get-PSDrive -Name D -ErrorAction SilentlyContinue)) {
         Mock Test-Path -ModuleName CargoTools { $true } -ParameterFilter { $Path -eq 'T:\' -or $Path -eq 'D:\' }
         Mock Test-CargoToolsLocalCacheDrive -ModuleName CargoTools { $DriveInfo.Name -eq 'D:\' }
         (& $script:module { Get-DefaultMachineConfig })['CacheRoot'] | Should -Be 'D:\RustCache'
@@ -252,6 +253,8 @@ Describe 'Tracked machine registry (Config/machines-cargo.json)' {
         Mock Get-MachineIdentity -ModuleName CargoTools { 'DTM-P1GEN9' }
         Mock Get-DefaultMachineConfig -ModuleName CargoTools { @{ CacheRoot = 'C:\default' } }
         Mock Register-CurrentMachine -ModuleName CargoTools { throw 'a known machine must not be re-registered' }
+        # The entry's T: paths are only honoured while T: is mounted; do not depend on this host.
+        Mock Test-Path -ModuleName CargoTools { $true } -ParameterFilter { $LiteralPath -eq 'T:\' }
         try {
             $config = & $script:module { Get-MachineConfig -Force }
             $config['CacheRoot'] | Should -Be 'T:\RustCache'
