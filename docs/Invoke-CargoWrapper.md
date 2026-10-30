@@ -98,7 +98,40 @@ Accept wildcard characters: False
 ```
 
 ### -WorkingDirectory
-Working directory containing Cargo.toml for the build.
+Existing filesystem directory used for the invocation, including raw mode selected
+by `--raw`, `--passthrough`, or `CARGO_RAW`. Named invocations resolve this path
+literally; bracket characters do not expand as wildcards. Missing paths, files and
+non-filesystem providers fail before native Cargo invocation. An explicit directory
+is also validated for wrapper help. Omit the parameter to keep the caller's directory;
+null and empty strings retain the same pre-existing absence behavior.
+
+The [implementation](../Public/Invoke-CargoWrapper.ps1) restores the caller's location
+on success, native nonzero status, early return and exception. This does not change
+argument routing, toolchain selection, native exit-code reporting or global PATH.
+
+Run the [focused Pester tests](../Tests/Invoke-CargoWrapper.WorkingDirectory.Tests.ps1)
+with `Invoke-Pester -Path ./Tests/Invoke-CargoWrapper.WorkingDirectory.Tests.ps1`.
+They require Pester 5 and a child `pwsh`; mocked module services and a synthetic
+command record directories and arguments without invoking Cargo, rustup, cache
+servers, device code or installers. Failing-first and passing receipts are kept by
+the current maintainer. The [scoped review register](../Tests/WORKING_DIRECTORY_TEST_REVIEW.csv)
+binds expanded case names and source hashes manually; the shared test collector
+does not support Pester and does not certify these records automatically. Each
+selector digest hashes the UTF-8 test file with CRLF normalized to LF, a NUL byte,
+and its exact NUnit expanded case name. The target digest hashes the whole public
+function file with the same newline normalization. Any change invalidates the
+conservative full-file bindings.
+
+The new selection passes 19 cases; the identical final tests fail 11 cases on the
+old source. The existing fake-command contract target passes 34 separately. An
+initial combined runner injected global StrictMode and failed two unchanged legacy
+fixture assumptions; that rejected receipt remains preserved. The focused file
+sets its own StrictMode, while the existing contract runs in its intended caller
+context. No assertion was weakened to obtain the passing results.
+
+Source qualification is separate from deploying the module or replacing installed
+wrappers. Use the reviewed source until a separate deployment records its target,
+rollback and smoke results.
 
 ```yaml
 Type: String
