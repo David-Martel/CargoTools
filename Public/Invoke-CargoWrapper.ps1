@@ -527,6 +527,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
         }
         if ($useFastlink -and -not $useLld) { Add-RustFlags '-C link-arg=/DEBUG:FASTLINK' }
 
+        $noSccacheConfig = @()
         $sccacheOk = Start-SccacheServer
         if (-not $sccacheOk) {
             # sccache failed to start - clear RUSTC_WRAPPER to prevent cargo from trying
@@ -537,7 +538,8 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                 # config.toml) apply again, so Cargo would still run rustc through the dead sccache. An empty
                 # RUSTC_WRAPPER would override it, but PowerShell deletes a variable assigned '', so the empty
                 # override goes on the command line. One token, so Get-PrimaryCommand still skips it.
-                $passThrough.Insert(0, '--config=build.rustc-wrapper=""')
+                $noSccacheConfig = @('--config=build.rustc-wrapper=""')
+                $passThrough.Insert(0, $noSccacheConfig[0])
                 Write-CargoStatus -Phase 'Environment' -Message 'sccache unavailable, building without cache acceleration' -Type 'Warning' -MinVerbosity 1
             }
         } else {
@@ -810,7 +812,9 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                     }
 
                     $profile = Get-BuildProfile $passThrough.ToArray()
-                    $nextestArgs = @('nextest', 'run')
+                    # The post-build runs need the same override: nextest's own `cargo test --no-run` would
+                    # otherwise compile through the dead sccache from the config file.
+                    $nextestArgs = @('nextest', 'run') + $noSccacheConfig
                     if ($scopeArgs.Count -gt 0) {
                         $nextestArgs += $scopeArgs.ToArray()
                     } else {
@@ -833,7 +837,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                     }
 
                     if ($runPostBuildDoctest -and (Test-DoctestEligibleScope -RustupPath $rustupPath -Toolchain $toolchain -ScopeArgs $scopeArgs.ToArray())) {
-                        $docArgs = @('test')
+                        $docArgs = $noSccacheConfig + @('test')
                         if ($scopeArgs.Count -gt 0) {
                             $docArgs += $scopeArgs.ToArray()
                         } else {

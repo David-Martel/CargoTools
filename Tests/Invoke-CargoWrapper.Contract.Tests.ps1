@@ -251,6 +251,27 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
         $result[-1] | Should -Be 0
     }
 
+    It 'disables a config-file sccache wrapper in the post-build nextest and doctest runs too' {
+        # Protects: the post-build test runs that follow a sccache fallback build also run without sccache.
+        # Detects: overriding the wrapper only for the build itself. nextest's own `cargo test --no-run` then
+        # compiled through the dead sccache (vigil-eko release build, 2026-10-30: "sccache: error: failed to
+        # execute compile" from `cargo test --no-run --message-format json-render-diagnostics`).
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        $env:CARGOTOOLS_RUN_TESTS_AFTER_BUILD = '1'
+        $env:CARGOTOOLS_RUN_DOCTESTS_AFTER_BUILD = '1'
+        $env:RUSTC_WRAPPER = 'sccache'
+        Mock Start-SccacheServer -ModuleName CargoTools { $false }
+        $result = @(Invoke-CargoWrapper -ArgumentList @('build'))
+        $calls = @(Read-NativeCall)
+        $nextest = @($calls | Where-Object { $_ -contains 'nextest' -and $_ -contains '--no-fail-fast' })
+        $doctest = @($calls | Where-Object { $_ -contains '--doc' })
+        $nextest.Count | Should -Be 1
+        $doctest.Count | Should -Be 1
+        $nextest[0] | Should -Contain '--config=build.rustc-wrapper=""'
+        $doctest[0] | Should -Contain '--config=build.rustc-wrapper=""'
+        $result[-1] | Should -Be 0
+    }
+
     It 'publishes wrapper-only success without launching native Cargo' {
         $global:LASTEXITCODE = 37
         $result = @(Invoke-CargoWrapper --wrapper-help 6>$null)
