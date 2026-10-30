@@ -533,6 +533,11 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
             # to invoke a non-functional sccache, which would produce confusing errors
             if (Test-SccacheRustcWrapper -Wrapper $env:RUSTC_WRAPPER) {
                 Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
+                # Removing the variable lets a Cargo config `build.rustc-wrapper = "sccache"` (CARGO_HOME
+                # config.toml) apply again, so Cargo would still run rustc through the dead sccache. An empty
+                # RUSTC_WRAPPER would override it, but PowerShell deletes a variable assigned '', so the empty
+                # override goes on the command line. One token, so Get-PrimaryCommand still skips it.
+                $passThrough.Insert(0, '--config=build.rustc-wrapper=""')
                 Write-CargoStatus -Phase 'Environment' -Message 'sccache unavailable, building without cache acceleration' -Type 'Warning' -MinVerbosity 1
             }
         } else {

@@ -234,6 +234,23 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
         Should -Invoke Exit-CargoBuildQueue -ModuleName CargoTools -Times 1 -Exactly
     }
 
+    It 'disables a config-file sccache wrapper when the sccache server cannot start' {
+        # Protects: a build that falls back from a dead sccache really runs without it.
+        # Detects: removing only Env:RUSTC_WRAPPER, which lets CARGO_HOME/config.toml's
+        # `build.rustc-wrapper = "sccache"` apply again (vigil-eko release build, 2026-10-30:
+        # "sccache unavailable, building without cache acceleration", then rustc failed under sccache).
+        # The healthy-sccache tests above assert their exact argv, so they show a working server adds nothing.
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        $env:RUSTC_WRAPPER = 'sccache'
+        Mock Start-SccacheServer -ModuleName CargoTools { $false }
+        $result = @(Invoke-CargoWrapper -ArgumentList @('build'))
+        $calls = @(Read-NativeCall)
+        $calls.Count | Should -Be 1
+        $calls[0] | Should -Be @('run', 'stable', 'cargo', '--config=build.rustc-wrapper=""', 'build')
+        $env:RUSTC_WRAPPER | Should -BeNullOrEmpty
+        $result[-1] | Should -Be 0
+    }
+
     It 'publishes wrapper-only success without launching native Cargo' {
         $global:LASTEXITCODE = 37
         $result = @(Invoke-CargoWrapper --wrapper-help 6>$null)
