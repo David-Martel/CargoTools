@@ -1,5 +1,16 @@
 # CargoTools
 
+For a source checkout, use PowerShell 7 and Pester 5. Importing the module builds
+its inline helpers; there is no separate Rust build for these software tests.
+Rust is needed for the final version query.
+
+```powershell
+git clone https://github.com/David-Martel/CargoTools.git
+Import-Module ./CargoTools/CargoTools.psd1 -Force
+Invoke-Pester -Path ./CargoTools/Tests/Invoke-CargoWrapper.WorkingDirectory.Tests.ps1
+Invoke-CargoWrapper -Command '--version' -AdditionalArgs @('--raw') -WorkingDirectory ./CargoTools
+```
+
 > Routed cargo wrappers for Windows, WSL, Docker, and Apple cross-compile, with shared sccache, smart defaults, LLM-friendly diagnostics, and global Rust config management.
 
 <!-- ci-badge -->
@@ -89,6 +100,7 @@ PS C:\> cargo-wrapper --raw build --release            # bypass everything
 
 ## Documentation
 
+- [Working-directory contract](docs/Invoke-CargoWrapper.md#-workingdirectory) — literal paths, raw/normal mode, caller restoration and bounded software tests.
 - [`docs/wrappers.md`](docs/wrappers.md) — full CLI reference for every wrapper, common flags, env vars, JSON envelope schema, cross-platform notes.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — error codes, self-healing recovery, decision table for LLM agents, common build failures.
 - [`docs/AGENTS.md`](docs/AGENTS.md) — guidance for AI agents working in this repo.

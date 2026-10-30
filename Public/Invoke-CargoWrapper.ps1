@@ -6,6 +6,11 @@ Centralized cargo wrapper with sccache and diagnostics support.
 Sets sccache defaults, optional linkers, and runs preflight diagnostics before cargo builds.
 .PARAMETER ArgumentList
 Raw cargo arguments to pass through.
+.PARAMETER WorkingDirectory
+Existing filesystem directory used for both normal and raw invocations. The path
+is literal, and the caller's location is restored on every return or exception.
+.LINK
+../docs/Invoke-CargoWrapper.md#-workingdirectory
 .EXAMPLE
 Invoke-CargoWrapper --wrapper-help
 .EXAMPLE
@@ -54,6 +59,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
     # run native tools and overwrite LASTEXITCODE. Exceptions default to failure.
     $wrapperExitCode = 1
     $wrapperThrew = $false
+    $popLocation = $false
     try {
     $rawArgs = if ($PSCmdlet.ParameterSetName -eq 'Named') {
         $argsList = New-Object System.Collections.Generic.List[string]
@@ -374,6 +380,19 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
 
     $requestedToolchain = Remove-CargoToolchainOverrideArg -ArgsList $passThrough
 
+    # Location custody must also cover raw mode and its early returns.
+    if ($WorkingDirectory) {
+        $workingDirectoryItem = Get-Item -LiteralPath $WorkingDirectory -Force -ErrorAction SilentlyContinue
+        if ($null -eq $workingDirectoryItem -or -not $workingDirectoryItem.PSIsContainer -or
+            $workingDirectoryItem.PSProvider.Name -ne 'FileSystem') {
+            Write-Error "Working directory must be an existing filesystem directory: $WorkingDirectory"
+            $wrapperExitCode = 1
+            return $wrapperExitCode
+        }
+        Push-Location -LiteralPath $workingDirectoryItem.FullName -ErrorAction Stop
+        $popLocation = $true
+    }
+
     # Raw/passthrough mode: bypass all wrapper behavior, run cargo directly
     if ($rawMode) {
         Ensure-MsvcEnv
@@ -463,17 +482,6 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
             $wrapperExitCode = 0
             return $wrapperExitCode
         }
-    }
-
-    $popLocation = $false
-    if ($WorkingDirectory) {
-        if (-not (Test-Path $WorkingDirectory)) {
-            Write-Error "Working directory not found: $WorkingDirectory"
-            $wrapperExitCode = 1
-            return $wrapperExitCode
-        }
-        Push-Location $WorkingDirectory
-        $popLocation = $true
     }
 
     $queueTicket = $null
@@ -895,13 +903,13 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
         if ($queueTicket) {
             Exit-CargoBuildQueue -TicketPath $queueTicket.TicketPath
         }
-        if ($popLocation) { Pop-Location }
     }
     } catch {
         $wrapperExitCode = 1
         $wrapperThrew = $true
         throw
     } finally {
+        if ($popLocation) { Pop-Location }
         $global:LASTEXITCODE = $wrapperExitCode
         # `pwsh -Command` (and `&&`, `if ($?)`) read `$?`, not LASTEXITCODE, so a bare return
         # value let a failed build or test run exit 0. Raise a non-terminating error so `$?` is
