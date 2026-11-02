@@ -534,14 +534,14 @@ function Ensure-RunArgSeparator {
             continue
         }
 
-        if ($flagsWithValue -contains $arg) {
+        if ($flagsWithValue -ccontains $arg) {
             $expectValue = $true
             continue
         }
 
-        if ($flagsNoValue -contains $arg) { continue }
+        if ($flagsNoValue -ccontains $arg) { continue }
         if ($arg -like '--*=*') { continue }
-        if ($arg -like '-*' -and $flagsWithValue -notcontains $arg -and $flagsNoValue -notcontains $arg) {
+        if ($arg -like '-*' -and $flagsWithValue -cnotcontains $arg -and $flagsNoValue -cnotcontains $arg) {
             $result = New-Object System.Collections.Generic.List[string]
             for ($j = 0; $j -lt $i; $j++) { $result.Add([string]$ArgsList[$j]) }
             $result.Add('--')

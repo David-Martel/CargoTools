@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# maturin.ps1 - CargoTools v0.9.0 maturin wrapper
+# maturin.ps1 - CargoTools v0.9.1 maturin wrapper
 # Preserves venv detection. Adds wrapper flags + sccache integration.
 $ErrorActionPreference = 'Stop'
 [string[]]$ArgumentList = @($args)

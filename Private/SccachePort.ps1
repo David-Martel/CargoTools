@@ -64,6 +64,25 @@ function Resolve-FreeSccachePort {
     # State is opt-in: direct callers without a cache root retain their requested
     # port and do not read or change another workspace's machine-wide state.
     $stateFile = if ($CacheRoot) { Get-SccachePortStateFile -CacheRoot $CacheRoot } else { $null }
+
+    # A healthy server already answering on the configured port wins over persisted state.
+    # Otherwise a stale resolved-port.txt (a port once picked while the configured one looked
+    # busy) diverts every build to a second, empty server while the shared one sits idle.
+    $configuredPort = 0
+    if ([int]::TryParse($DesiredPort, [ref]$configuredPort) -and $configuredPort -gt 0 -and $configuredPort -le 65535 -and
+        (Test-SccacheEndpointListening -Port $configuredPort) -and (Test-SccacheHealth -Port $configuredPort).Healthy) {
+        if ($stateFile) {
+            try {
+                $stateDir = Split-Path -Parent $stateFile
+                if (-not (Test-Path -LiteralPath $stateDir)) { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
+                [System.IO.File]::WriteAllText($stateFile, "$configuredPort", [System.Text.UTF8Encoding]::new($false))
+            } catch {
+                Write-Verbose "Could not persist sccache port: $($_.Exception.Message)"
+            }
+        }
+        return "$configuredPort"
+    }
+
     if ($stateFile -and (Test-Path -LiteralPath $stateFile)) {
         try {
             $persisted = (Get-Content -LiteralPath $stateFile -Raw -ErrorAction Stop).Trim()

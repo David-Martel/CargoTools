@@ -188,7 +188,7 @@ Describe 'Actual top-level wrappers retain native offline exit codes with source
         $result.Observation.Exports.Count | Should -Be 6
         foreach ($command in $result.Observation.Exports) {
             $command.Path | Should -BeExactly (Join-Path $script:SelectionRoot 'CargoTools.psm1')
-            $command.Version | Should -BeExactly '0.9.0'
+            $command.Version | Should -BeExactly '0.9.1'
         }
         if ($Expected -eq 0) { $result.Output | Should -Match 'selection_fixture@0.1.0' }
         else { $result.ErrorOutput | Should -Match 'absent.toml' }

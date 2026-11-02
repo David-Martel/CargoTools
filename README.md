@@ -104,7 +104,7 @@ PS C:\> cargo-wrapper --raw build --release            # bypass everything
 - [`docs/wrappers.md`](docs/wrappers.md) — full CLI reference for every wrapper, common flags, env vars, JSON envelope schema, cross-platform notes.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — error codes, self-healing recovery, decision table for LLM agents, common build failures.
 - [`docs/AGENTS.md`](docs/AGENTS.md) — guidance for AI agents working in this repo.
-- [`CHANGELOG.md`](CHANGELOG.md) — version history (current: 0.9.0).
+- [`CHANGELOG.md`](CHANGELOG.md) — version history (current: 0.9.1).
 - [`CLAUDE.md`](CLAUDE.md) — architecture, design decisions, env vars, gotchas.
 - platyPS-generated cmdlet help: `Get-Help Invoke-CargoWrapper -Full`, `Get-Help Invoke-CargoRoute -Full`, etc.
 
