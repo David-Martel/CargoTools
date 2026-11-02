@@ -188,7 +188,7 @@ Describe 'Actual top-level wrappers retain native offline exit codes with source
         $result.Observation.Exports.Count | Should -Be 6
         foreach ($command in $result.Observation.Exports) {
             $command.Path | Should -BeExactly (Join-Path $script:SelectionRoot 'CargoTools.psm1')
-            $command.Version | Should -BeExactly '0.9.1'
+            $command.Version | Should -BeExactly '0.9.2'
         }
         if ($Expected -eq 0) { $result.Output | Should -Match 'selection_fixture@0.1.0' }
         else { $result.ErrorOutput | Should -Match 'absent.toml' }
@@ -198,7 +198,7 @@ Describe 'Actual top-level wrappers retain native offline exit codes with source
 BeforeDiscovery {
     $outerChildCases=foreach($shell in @('Core','Desktop')) {
         foreach($wrapper in @('cargo','cargo-route')) {
-            foreach($flag in @('--help','--version','--diagnose','--llm','--no-wrapper','--json-output','')) {
+            foreach($flag in @('--help','--version','--wrapper-version','--diagnose','--llm','--no-wrapper','--json-output','')) {
                 @{Shell=$shell;Wrapper=$wrapper;Flag=$flag}
             }
         }
@@ -321,9 +321,19 @@ exit $LASTEXITCODE
         }
     }
 
+    It 'forwards a host --version to cargo through <Wrapper> in <Shell>' -ForEach @(
+        @{Shell='Core';Wrapper='cargo'}, @{Shell='Core';Wrapper='cargo-route'}
+    ) {
+        $result=Invoke-OuterWrapperChild -Shell $Shell -Wrapper $Wrapper -Flag '--version' -HostFlag $true
+        $result.ExitCode|Should -Be 0 -Because ($result.Output+$result.ErrorOutput)
+        $result.Observation.Route|Should -BeExactly 'module'
+        @($result.Observation.Arguments)|Should -Be @('--version','run','--','child')
+        $result.Output|Should -Not -Match 'CargoTools wrapper/'
+    }
+
     It 'recognizes host <Flag> before the separator without consuming a matching child flag' -ForEach @(
         @{Flag='--help';Field='HelpRequested'}
-        @{Flag='--version';Field='VersionRequested'}
+        @{Flag='--wrapper-version';Field='VersionRequested'}
         @{Flag='--diagnose';Field='DiagnoseRequested'}
         @{Flag='--llm';Field='LlmMode'}
         @{Flag='--no-wrapper';Field='NoWrapper'}

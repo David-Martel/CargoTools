@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# cargo.ps1 - CargoTools v0.9.1 top-level cargo entry point
+# cargo.ps1 - CargoTools v0.9.2 top-level cargo entry point
 # Delegates to cargo-route.ps1 after processing wrapper flags.
 $ErrorActionPreference = 'Stop'
 [string[]]$ArgumentList = @($args)

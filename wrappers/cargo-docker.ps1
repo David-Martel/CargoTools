@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# cargo-docker.ps1 - CargoTools v0.9.1 Docker build shim
+# cargo-docker.ps1 - CargoTools v0.9.2 Docker build shim
 # Loads CargoTools module and calls Invoke-CargoDocker.
 $ErrorActionPreference = 'Stop'
 [string[]]$ArgumentList = @($args)

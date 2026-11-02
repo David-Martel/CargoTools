@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.2
+- **Fix: `cargo --version` now reaches cargo.** `--version` was claimed as a wrapper flag, so
+  `cargo --version` printed the wrapper banner while `cargo -V` printed cargo's version. It is the
+  wrapped tool's own flag (cargo, maturin, rust-analyzer), so the wrappers now forward it. The
+  wrapper banner moves to `--wrapper-version` (wrapper, module, cargo and rustc versions). Updated
+  `--help`, `docs/wrappers.md`, `docs/troubleshooting.md` and `README.md`. **Behaviour change:**
+  scripts that read the wrapper version from `--version` must use `--wrapper-version`.
+- **Fix: a negative sccache probe no longer stalls a cold start.** The loopback connect fallback
+  added in 0.9.1 waited 1000 ms on a refused port (1016 ms measured), once per probe. It now waits
+  250 ms; a live loopback accept takes well under a millisecond. Covered by a bound of 600 ms in
+  `Tests/SccacheLifecycle.Tests.ps1`.
+- **Removed `CargoTools-dtm-p1gen7.psd1`.** Nothing loads it (no code or doc references
+  it; `Import-Module CargoTools` resolves `CargoTools.psd1`), and it had drifted: it lacked the
+  exports and files added since, so it could not stand in for the real manifest. The tracked
+  `Private/Environment-dtm-p1gen7.ps1` variant stays. Stale 0.9.0 mentions in the docs are updated.
+- **Test fix: `Initialize-RustDefaults` merge and `-Force` tests no longer depend on the host.** They
+  planted `jobs = 16` and expected the code's default of 4, which is also what a 16-job host
+  produces, so the `-Force` test failed there and the merge test could not detect an overwrite.
+  They now plant `jobs = 977` (never a default) and derive the expected default from the same
+  machine-config source the code uses. Mutation check: with `-Force` ignored the test fails.
+
 ## 0.9.0
 - **Wrapper rewrite**: Replaced 9 ad-hoc wrapper shims with smart, self-healing scripts backed by a shared `wrappers/_WrapperHelpers.psm1` module. Each wrapper is now ≤60 lines of entry-point code.
 - **Standardized wrapper flags**: All wrappers now support `--help`, `-h`, `-?`, `/?`, `--version`, `--doctor`, `--diagnose`, `--llm`/`--json-output`, `--list-wrappers`, and `--no-wrapper`. Flags are stripped before forwarding to cargo.

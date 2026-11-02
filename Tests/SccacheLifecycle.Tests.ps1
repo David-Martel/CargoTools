@@ -206,6 +206,18 @@ Describe 'Listener detection when the OS listener table omits a live listener' {
     It 'finds a live loopback listener' {
         & $script:EndpointCheck -Port $script:LivePort | Should -BeTrue
     }
+    It 'answers a closed port quickly (a negative probe must not stall a cold start)' {
+        # Why: the connect fallback waited out its whole timeout on a refused port (about 1 s on
+        # dtm-p1gen9). A healthy loopback accept takes well under a millisecond, so the bound is
+        # generous at 600 ms while still catching a 1 s wait.
+        $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        try { $probe.Start(); $closed = $probe.LocalEndpoint.Port } finally { $probe.Stop() }
+        $watch = [System.Diagnostics.Stopwatch]::StartNew()
+        $result = & $script:EndpointCheck -Port $closed
+        $watch.Stop()
+        $result | Should -BeFalse
+        $watch.ElapsedMilliseconds | Should -BeLessThan 600
+    }
     It 'reports a closed port as not listening' {
         $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
         try { $probe.Start(); $closed = $probe.LocalEndpoint.Port } finally { $probe.Stop() }

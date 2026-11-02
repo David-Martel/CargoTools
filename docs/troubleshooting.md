@@ -372,7 +372,7 @@ PS C:\> Get-Module CargoTools | Format-List Name, Version, ModuleBase
 Include in the report:
 
 1. CargoTools module version (`Get-Module CargoTools`).
-2. Wrapper script version (`cargo --version`).
+2. Wrapper script version (`cargo --wrapper-version`).
 3. `diagnose.json`.
 4. `envelope.ndjson` (the failing run).
 5. The exact command line that triggered the issue.

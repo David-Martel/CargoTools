@@ -1366,9 +1366,11 @@ function Test-SccacheEndpointListening {
     # every healthy server look absent, so each wrapped build "started" a second server on a new
     # port and then reported "listener disappeared". A connect that is closed at once sends no
     # protocol bytes (sccache logs nothing for it) and proves the endpoint accepts connections.
+    # A loopback accept completes in well under a millisecond, while a refused connect can sit out
+    # the whole wait (1016 ms measured at 1000 ms), so keep it short: every negative probe pays it.
     $client = New-Object System.Net.Sockets.TcpClient ([System.Net.Sockets.AddressFamily]::InterNetwork)
     try {
-        return ($client.ConnectAsync([System.Net.IPAddress]::Loopback, $Port).Wait(1000) -and $client.Connected)
+        return ($client.ConnectAsync([System.Net.IPAddress]::Loopback, $Port).Wait(250) -and $client.Connected)
     } catch {
         return $false
     } finally {

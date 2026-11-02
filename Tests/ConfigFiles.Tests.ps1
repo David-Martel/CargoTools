@@ -541,23 +541,30 @@ Describe 'Initialize-RustDefaults' {
         $configPath = Join-Path $script:FakeCargo 'config.toml'
         Set-Content -Path $configPath -Value @'
 [build]
-jobs = 16
+jobs = 977
 '@
         Initialize-RustDefaults -Scope Cargo
         $content = Get-Content $configPath -Raw
-        # Should preserve jobs = 16, not overwrite with 4
-        $content | Should -Match 'jobs = 16'
+        # 977 can never be a machine default, so keeping it proves the merge preserved the user's value.
+        $content | Should -Match 'jobs = 977'
     }
 
     It 'Overwrites values with -Force' {
         $configPath = Join-Path $script:FakeCargo 'config.toml'
         Set-Content -Path $configPath -Value @'
 [build]
-jobs = 16
+jobs = 977
 '@
         Initialize-RustDefaults -Scope Cargo -Force
         $content = Get-Content $configPath -Raw
-        $content | Should -Match 'jobs = 4'
+        # The default comes from the code's own source (machine BuildJobs, else 4), so the test holds on any host.
+        # The planted 977 can never equal it, so a -Force that stops overwriting leaves 977 behind and fails here.
+        $expectedJobs = & (Get-Module CargoTools) {
+            $mc = Get-MachineConfig
+            if ($mc['BuildJobs']) { [int]$mc['BuildJobs'] } else { 4 }
+        }
+        $content | Should -Match "jobs = $expectedJobs\b"
+        $content | Should -Not -Match 'jobs = 977'
     }
 
     It 'Returns objects with -PassThru' {

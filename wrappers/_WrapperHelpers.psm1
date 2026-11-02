@@ -157,7 +157,8 @@ function Get-WrapperContext {
             '-h'              { $helpRequested    = $true }
             '-?'              { $helpRequested    = $true }
             '/?'              { $helpRequested    = $true }
-            '--version'       { $versionRequested = $true }
+            # --version is the wrapped tool's own flag (cargo, maturin, rust-analyzer), like -V, and is forwarded.
+            '--wrapper-version' { $versionRequested = $true }
             '--doctor'        { $doctorRequested  = $true }
             '--diagnose'      { $diagnoseRequested = $true; $doctorRequested = $true; $llmMode = $true }
             '--llm'           { $llmMode          = $true }
@@ -411,7 +412,7 @@ function Show-WrapperHelp {
     Write-Host ''
     Write-Host 'WRAPPER FLAGS (consumed before forwarding to cargo):' -ForegroundColor White
     Write-Host '  --help, -h, -?, /?       Print this help message' -ForegroundColor Gray
-    Write-Host '  --version                Print wrapper + cargo + rustc versions' -ForegroundColor Gray
+    Write-Host '  --wrapper-version        Print wrapper + cargo + rustc versions (--version goes to cargo)' -ForegroundColor Gray
     Write-Host '  --doctor                 Run build environment diagnostics' -ForegroundColor Gray
     Write-Host '  --diagnose               Same as --doctor but JSON output only' -ForegroundColor Gray
     Write-Host '  --llm, --json-output     Emit JSON envelope events on stderr' -ForegroundColor Gray

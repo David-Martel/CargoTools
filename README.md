@@ -28,7 +28,7 @@ CargoTools is a PowerShell module that wraps `cargo` to make Rust builds on Wind
 - **Cross-target routing**: one `cargo build --target …` dispatches to Windows MSVC, WSL bash, Docker, or zigbuild automatically.
 - **Self-healing wrappers**: sccache death is detected and the build retries once; OneDrive sharing violations on the module file are retried 3x; PATH conflicts (Strawberry Perl, Git mingw64) are sanitised in-process.
 - **LLM-friendly output**: `--llm` flag emits NDJSON envelopes (`start`/`diagnostic`/`action`/`end`) on stderr while cargo output stays on stdout.
-- **Standardised wrapper UX**: every shim supports `--help`, `--version`, `--doctor`, `--diagnose`, `--llm`, `--list-wrappers`, `--no-wrapper` with consistent exit codes 0-4.
+- **Standardised wrapper UX**: every shim supports `--help`, `--wrapper-version`, `--doctor`, `--diagnose`, `--llm`, `--list-wrappers`, `--no-wrapper` with consistent exit codes 0-4.
 - **Quality gate**: optional mandatory clippy `--fix` + fmt + post-build nextest + doctests, controllable via `CARGOTOOLS_ENFORCE_QUALITY`.
 - **Global Rust config management**: `Initialize-RustDefaults` merges optimal defaults into `~/.cargo/config.toml`, `~/rustfmt.toml`, `~/.clippy.toml` without overwriting user customisations.
 - **Curated acceleration toolset**: `Install-CargoAccelerationToolset -Profile Deep` installs fast Rust/Cargo diagnostics such as `cargo-nextest`, `bacon`, `cargo-expand`, `cargo-audit`, `cargo-deny`, `cargo-llvm-cov`, `cargo-machete`, `cargo-semver-checks`, `cargo-mutants`, `samply`, `flamegraph`, `hyperfine`, and daily Rust-authored CLI helpers.
@@ -104,7 +104,7 @@ PS C:\> cargo-wrapper --raw build --release            # bypass everything
 - [`docs/wrappers.md`](docs/wrappers.md) — full CLI reference for every wrapper, common flags, env vars, JSON envelope schema, cross-platform notes.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — error codes, self-healing recovery, decision table for LLM agents, common build failures.
 - [`docs/AGENTS.md`](docs/AGENTS.md) — guidance for AI agents working in this repo.
-- [`CHANGELOG.md`](CHANGELOG.md) — version history (current: 0.9.1).
+- [`CHANGELOG.md`](CHANGELOG.md) — version history (current: 0.9.2).
 - [`CLAUDE.md`](CLAUDE.md) — architecture, design decisions, env vars, gotchas.
 - platyPS-generated cmdlet help: `Get-Help Invoke-CargoWrapper -Full`, `Get-Help Invoke-CargoRoute -Full`, etc.
 
@@ -141,7 +141,7 @@ PS C:\> Invoke-Pester -Path .\Tests\ -Output Detailed       # ~350 tests, ~2 min
 PS C:\> .\tools\Generate-Help.ps1                           # regenerate platyPS docs
 ```
 
-Version bumps are coordinated in three places: `CargoTools.psd1` (`ModuleVersion`), `CHANGELOG.md` (new section), and `tools/Install-Wrappers.ps1` (banner). Wrapper-only changes bump the wrapper version emitted by `--version`.
+Version bumps are coordinated in three places: `CargoTools.psd1` (`ModuleVersion`), `CHANGELOG.md` (new section), and `tools/Install-Wrappers.ps1` (banner). Wrapper-only changes bump the wrapper version emitted by `--wrapper-version`.
 
 ## License
 
