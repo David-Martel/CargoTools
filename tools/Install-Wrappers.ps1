@@ -289,7 +289,7 @@ function Show-InstallSummary {
 
 # --- Main ---
 
-Write-Host "CargoTools Wrapper Installer v0.9.1" -ForegroundColor Cyan
+Write-Host "CargoTools Wrapper Installer v0.9.2" -ForegroundColor Cyan
 Write-Host "Module: $moduleRoot" -ForegroundColor DarkGray
 
 # Check that wrappers/ source directory exists

@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# maturin.ps1 - CargoTools v0.9.1 maturin wrapper
+# maturin.ps1 - CargoTools v0.9.2 maturin wrapper
 # Preserves venv detection. Adds wrapper flags + sccache integration.
 $ErrorActionPreference = 'Stop'
 [string[]]$ArgumentList = @($args)
@@ -34,7 +34,10 @@ if ($ctx.ListRequested)    { Show-WrapperList; exit 0 }
 
 $maturinExe = Resolve-MaturinExe
 
-if ($ctx.HelpRequested -or $ctx.VersionRequested) {
+if ($ctx.VersionRequested) { Show-WrapperVersion -WrapperName 'maturin'; exit 0 }
+
+# Help and maturin's own --version go straight to maturin.
+if ($ctx.HelpRequested -or ($ArgumentList -contains '--version')) {
     $nativeArgs = [System.Collections.Generic.List[string]]::new()
     foreach ($a in $ArgumentList) {
         if ($a -eq '--llm' -or $a -eq '--json-output') { continue }

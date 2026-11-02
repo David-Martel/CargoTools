@@ -2,7 +2,7 @@
 
 Complete CLI reference for the wrapper scripts deployed by `tools/Install-Wrappers.ps1`. These shims sit on `PATH` (in `~/bin` and `~/.local/bin`) and forward into the `CargoTools` PowerShell module.
 
-This document describes the **rewritten wrapper surface** introduced in 0.9.0: a unified set of wrapper-level flags (`--help`, `--version`, `--doctor`, `--diagnose`, `--llm`, `--list-wrappers`, `--no-wrapper`), standardized exit codes, and a structured JSON envelope for LLM agents.
+This document describes the **rewritten wrapper surface** introduced in 0.9.0: a unified set of wrapper-level flags (`--help`, `--wrapper-version`, `--doctor`, `--diagnose`, `--llm`, `--list-wrappers`, `--no-wrapper`; `--version` was a wrapper flag in 0.9.0 and 0.9.1 and now goes to the wrapped tool), standardized exit codes, and a structured JSON envelope for LLM agents.
 
 For module-level architecture, see [`../CLAUDE.md`](../CLAUDE.md). For error remediation, see [`troubleshooting.md`](troubleshooting.md).
 
@@ -72,7 +72,7 @@ These flags are recognised by **all** CargoTools wrappers. They are intercepted 
 | Flag | Behaviour | Output | Exit |
 |---|---|---|---|
 | `--help`, `-h`, `-?`, `/?` | Subcommand-aware help: emits wrapper help, then merges native cargo help if a cargo subcommand is detected (e.g. `cargo build --help`). | stdout (text) | 0 |
-| `--version` | Prints wrapper script version, `CargoTools` module version, `cargo --version`, `rustc --version`. | stdout (text) | 0 |
+| `--wrapper-version` | Prints wrapper script version, `CargoTools` module version, `cargo --version`, `rustc --version`. Plain `--version` (like `-V`) is cargo's own flag and is forwarded. | stdout (text) | 0 |
 | `--doctor` | Full environment diagnostic. Delegates to [`Test-BuildEnvironment`](../Public/Test-BuildEnvironment.ps1) plus wrapper-layer checks (PATH, OneDrive, mutex liveness). | stdout (text) | 0 healthy / 4 misconfigured |
 | `--diagnose` | Same checks as `--doctor`, JSON output only (machine-readable). | stdout (JSON) | 0 / 4 |
 | `--llm`, `--json-output` | Activates JSON envelope on stderr for the lifetime of the invocation. Cargo output continues on stdout. | stderr (NDJSON) | passthrough |
@@ -106,7 +106,7 @@ When `--llm` (or `--json-output`, or `CARGO_VERBOSITY=llm`) is active, each wrap
 ### Schema
 
 ```json
-{"phase":"start","wrapper":"cargo","wrapper_version":"0.9.0","args":["build","--release"],"timestamp":"2026-04-28T18:42:01Z"}
+{"phase":"start","wrapper":"cargo","wrapper_version":"0.9.2","args":["build","--release"],"timestamp":"2026-04-28T18:42:01Z"}
 {"phase":"diagnostic","level":"warn","code":"PATH_SHADOWED","detail":"C:\\Strawberry\\c\\bin precedes MSVC on PATH","recovery":"Remove or reorder PATH entries"}
 {"phase":"action","name":"restarted-sccache","detail":"sccache was unreachable; restarted on port 4400"}
 {"phase":"end","exit_code":0,"duration_ms":12483,"wrapper":"cargo","actions_taken":["restarted-sccache"]}
@@ -127,7 +127,7 @@ A successful release build:
 
 ```text
 $ cargo build --release --llm
-{"phase":"start","wrapper":"cargo","wrapper_version":"0.9.0","args":["build","--release"],"timestamp":"2026-04-28T18:42:01Z"}
+{"phase":"start","wrapper":"cargo","wrapper_version":"0.9.2","args":["build","--release"],"timestamp":"2026-04-28T18:42:01Z"}
 {"phase":"diagnostic","level":"info","code":"ROUTE_SELECTED","detail":"target=x86_64-pc-windows-msvc -> windows backend"}
    Compiling mycrate v0.1.0
     Finished `release` profile [optimized] in 8.42s
@@ -163,7 +163,7 @@ The default user-facing entry point. Forwards into `Invoke-CargoRoute`, which cl
 ```powershell
 PS C:\> cargo build --release
 PS C:\> cargo --route wsl test --target x86_64-unknown-linux-gnu
-PS C:\> cargo --no-route --version
+PS C:\> cargo --no-route --wrapper-version
 PS C:\> cargo --doctor
 PS C:\> cargo --llm build --release 2> build.ndjson
 ```

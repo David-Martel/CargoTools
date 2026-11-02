@@ -1,5 +1,5 @@
 #Requires -Modules Pester
-# Wrappers.Tests.ps1 — CargoTools v0.9.1 wrapper layer tests
+# Wrappers.Tests.ps1 — CargoTools v0.9.2 wrapper layer tests
 # Tests: _WrapperHelpers.psm1 + all 9 wrapper scripts
 
 # NOTE: In Pester 5, script-level variables set at parse time DO persist through
@@ -129,8 +129,8 @@ Describe 'Get-CargoToolsVersion' {
     It 'returns a semver string' {
         Get-CargoToolsVersion | Should -Match '^\d+\.\d+\.\d+$'
     }
-    It 'returns 0.9.1' {
-        Get-CargoToolsVersion | Should -Be '0.9.1'
+    It 'returns 0.9.2' {
+        Get-CargoToolsVersion | Should -Be '0.9.2'
     }
 }
 
@@ -157,10 +157,15 @@ Describe 'Get-WrapperContext flag parsing' {
     It 'parses /? as help' {
         (Get-WrapperContext -InvocationArgs @('/?') -WrapperName 'cargo').HelpRequested | Should -BeTrue
     }
-    It 'parses --version' {
-        $ctx = Get-WrapperContext -InvocationArgs @('--version') -WrapperName 'cargo'
+    It 'parses --wrapper-version' {
+        $ctx = Get-WrapperContext -InvocationArgs @('--wrapper-version') -WrapperName 'cargo'
         $ctx.VersionRequested | Should -BeTrue
         $ctx.PassThrough      | Should -BeNullOrEmpty
+    }
+    It 'leaves --version for cargo (the tool owns it, like -V)' {
+        $ctx = Get-WrapperContext -InvocationArgs @('--version') -WrapperName 'cargo'
+        $ctx.VersionRequested | Should -BeFalse
+        @($ctx.PassThrough)   | Should -Be @('--version')
     }
     It 'parses --doctor (LlmMode stays false)' {
         $ctx = Get-WrapperContext -InvocationArgs @('--doctor') -WrapperName 'cargo'
@@ -214,9 +219,9 @@ Describe 'Get-WrapperContext flag parsing' {
         $ctx = Get-WrapperContext -InvocationArgs @('--help', 'build') -WrapperName 'cargo'
         $ctx.PassThrough | Should -Not -Contain '--help'
     }
-    It '--version not in PassThrough' {
-        $ctx = Get-WrapperContext -InvocationArgs @('--version') -WrapperName 'cargo'
-        $ctx.PassThrough | Should -Not -Contain '--version'
+    It '--wrapper-version not in PassThrough' {
+        $ctx = Get-WrapperContext -InvocationArgs @('--wrapper-version') -WrapperName 'cargo'
+        $ctx.PassThrough | Should -Not -Contain '--wrapper-version'
     }
 }
 
@@ -420,19 +425,35 @@ Describe 'cargo.ps1 --help subprocess' {
     It 'output contains WRAPPER FLAGS' {
         pwsh -NoProfile -NonInteractive -File $script:CargoPs1 --help 2>&1 | Out-String | Should -Match 'WRAPPER FLAGS'
     }
-    It 'output contains --version' {
-        pwsh -NoProfile -NonInteractive -File $script:CargoPs1 --help 2>&1 | Out-String | Should -Match '--version'
+    It 'output documents --wrapper-version' {
+        pwsh -NoProfile -NonInteractive -File $script:CargoPs1 --help 2>&1 | Out-String | Should -Match '--wrapper-version'
     }
 }
 
-Describe 'cargo.ps1 --version subprocess' {
+Describe 'cargo.ps1 --wrapper-version subprocess' {
     BeforeAll { $script:CargoPs1 = Join-Path $script:WrappersDir 'cargo.ps1' }
     It 'exits 0' {
-        pwsh -NoProfile -NonInteractive -File $script:CargoPs1 --version 2>&1 | Out-Null
+        pwsh -NoProfile -NonInteractive -File $script:CargoPs1 --wrapper-version 2>&1 | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
-    It 'output contains version number' {
-        pwsh -NoProfile -NonInteractive -File $script:CargoPs1 --version 2>&1 | Out-String | Should -Match '\d+\.\d+\.\d+'
+    It 'output names the wrapper and contains a version number' {
+        $out = pwsh -NoProfile -NonInteractive -File $script:CargoPs1 --wrapper-version 2>&1 | Out-String
+        $out | Should -Match 'CargoTools wrapper/cargo v\d+\.\d+\.\d+'
+    }
+}
+
+Describe 'cargo.ps1 --version reaches cargo' {
+    BeforeAll { $script:CargoPs1 = Join-Path $script:WrappersDir 'cargo.ps1' }
+    It 'prints the cargo version, not the wrapper banner' {
+        # --no-wrapper keeps this to the bare toolchain call, so it needs only rustup.
+        if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+            Set-ItResult -Skipped -Because 'rustup is not installed'
+            return
+        }
+        $out = pwsh -NoProfile -NonInteractive -File $script:CargoPs1 --no-wrapper --version 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 0
+        $out | Should -Match '(?m)^cargo \d+\.\d+\.\d+'
+        $out | Should -Not -Match 'CargoTools wrapper'
     }
 }
 
@@ -569,9 +590,13 @@ Describe 'Argument pass-through fidelity' {
         $ctx.PassThrough | Should -Not -Contain '--no-wrapper'
         $ctx.PassThrough | Should -Be @('build', '--release')
     }
-    It '--version NOT forwarded' {
+    It '--wrapper-version NOT forwarded' {
+        $ctx = Get-WrapperContext -InvocationArgs @('--wrapper-version') -WrapperName 'cargo'
+        $ctx.PassThrough | Should -Not -Contain '--wrapper-version'
+    }
+    It '--version IS forwarded' {
         $ctx = Get-WrapperContext -InvocationArgs @('--version') -WrapperName 'cargo'
-        $ctx.PassThrough | Should -Not -Contain '--version'
+        $ctx.PassThrough | Should -Contain '--version'
     }
     It '--list-wrappers NOT forwarded' {
         $ctx = Get-WrapperContext -InvocationArgs @('--list-wrappers', 'build') -WrapperName 'cargo'
@@ -582,14 +607,14 @@ Describe 'Argument pass-through fidelity' {
 # ---------------------------------------------------------------------------
 # Per-wrapper subprocess tests
 # ---------------------------------------------------------------------------
-Describe 'Per-wrapper --version exits 0' {
+Describe 'Per-wrapper --wrapper-version exits 0' {
     BeforeAll { $script:__MaturinAvailable = [bool](Get-Command maturin.exe -ErrorAction SilentlyContinue) }
-    It '<WName> --version exits 0' -TestCases $__WrapperTestCases {
+    It '<WName> --wrapper-version exits 0' -TestCases $__WrapperTestCases {
         param($WName, $WPath)
         if ($WName -eq 'maturin' -and -not $script:__MaturinAvailable) {
             Set-ItResult -Skipped -Because 'maturin.exe is not installed on this machine'
         }
-        pwsh -NoProfile -NonInteractive -File $WPath --version 2>&1 | Out-Null
+        pwsh -NoProfile -NonInteractive -File $WPath --wrapper-version 2>&1 | Out-Null
         $LASTEXITCODE | Should -Be 0
     }
 }
@@ -663,8 +688,8 @@ Describe 'Per-wrapper native flag pass-through binding' {
 # ---------------------------------------------------------------------------
 Describe 'CargoTools.psd1 manifest checks' {
     BeforeAll { $script:PsdData = Import-PowerShellDataFile -Path (Join-Path $script:ModuleRoot 'CargoTools.psd1') }
-    It 'ModuleVersion equals 0.9.1' {
-        $script:PsdData.ModuleVersion | Should -Be '0.9.1'
+    It 'ModuleVersion equals 0.9.2' {
+        $script:PsdData.ModuleVersion | Should -Be '0.9.2'
     }
     It 'FileList contains wrappers\_WrapperHelpers.psm1 (any separator form)' {
         # FileList uses double-backslash in psd1 single-quoted strings

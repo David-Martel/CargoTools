@@ -41,7 +41,7 @@ Each section: source path, one-paragraph profile, example CargoTools tasks, sugg
 
 - **Source**: `C:\Users\david\.claude\agents\rust-pro.md`
 - **Model**: sonnet
-- **Profile**: Rust expert specializing in safe, performant systems programming — ownership, lifetimes, traits, async/await, Tokio, safe concurrency, zero-cost abstractions. Already aware of CargoTools v0.9.0 and instructed to call `Invoke-CargoWrapper` instead of bare `cargo` on this machine.
+- **Profile**: Rust expert specializing in safe, performant systems programming — ownership, lifetimes, traits, async/await, Tokio, safe concurrency, zero-cost abstractions. Already aware of CargoTools v0.9.2 and instructed to call `Invoke-CargoWrapper` instead of bare `cargo` on this machine.
 
 - **Example CargoTools tasks**:
   1. Validate that `Initialize-CargoEnv` env-var defaults match what current Rust toolchains expect (e.g., new `RUSTFLAGS` semantics, lld linker invocation conventions).

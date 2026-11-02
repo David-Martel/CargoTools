@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# rust-analyzer.ps1 - CargoTools v0.9.1 rust-analyzer entry point
+# rust-analyzer.ps1 - CargoTools v0.9.2 rust-analyzer entry point
 # Delegates to rust-analyzer-wrapper.ps1 after processing wrapper flags.
 $ErrorActionPreference = 'Stop'
 [string[]]$ArgumentList = @($args)
