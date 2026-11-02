@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# rust-analyzer-wrapper.ps1 - CargoTools v0.9.0 rust-analyzer module shim
+# rust-analyzer-wrapper.ps1 - CargoTools v0.9.1 rust-analyzer module shim
 # Loads CargoTools module and calls Invoke-RustAnalyzerWrapper.
 $ErrorActionPreference = 'Stop'
 [string[]]$ArgumentList = @($args)

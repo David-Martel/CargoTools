@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# cargo-route.ps1 - CargoTools v0.9.0 routing shim
+# cargo-route.ps1 - CargoTools v0.9.1 routing shim
 # Loads CargoTools module and calls Invoke-CargoRoute.
 $ErrorActionPreference = 'Stop'
 [string[]]$ArgumentList = @($args)

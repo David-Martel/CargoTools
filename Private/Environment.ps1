@@ -525,7 +525,7 @@ function Test-RustAnalyzerStandaloneInvocation {
         return $false
     }
 
-    if ($argsList -contains '--help' -or $argsList -contains '-h' -or $argsList -contains '--version' -or $argsList -contains '-V') {
+    if ($argsList -ccontains '--help' -or $argsList -ccontains '-h' -or $argsList -ccontains '--version' -or $argsList -ccontains '-V') {
         return $true
     }
 
@@ -1353,7 +1353,7 @@ function Get-SccacheServerPort {
 
 function Test-SccacheEndpointListening {
     param([ValidateRange(1, 65535)][int]$Port)
-    # Passive inspection: unlike a TCP connection, this sends no protocol bytes.
+    # Passive inspection first: it sends nothing to the endpoint.
     foreach ($endpoint in [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()) {
         if ($endpoint.Port -eq $Port -and
             ($endpoint.Address.Equals([System.Net.IPAddress]::Loopback) -or
@@ -1361,7 +1361,19 @@ function Test-SccacheEndpointListening {
             return $true
         }
     }
-    return $false
+    # Fallback: on some Windows builds (observed on dtm-p1gen9, build 26300) the OS listener table
+    # omits live loopback listeners, even one this process just bound. Trusting the table alone made
+    # every healthy server look absent, so each wrapped build "started" a second server on a new
+    # port and then reported "listener disappeared". A connect that is closed at once sends no
+    # protocol bytes (sccache logs nothing for it) and proves the endpoint accepts connections.
+    $client = New-Object System.Net.Sockets.TcpClient ([System.Net.Sockets.AddressFamily]::InterNetwork)
+    try {
+        return ($client.ConnectAsync([System.Net.IPAddress]::Loopback, $Port).Wait(1000) -and $client.Connected)
+    } catch {
+        return $false
+    } finally {
+        $client.Dispose()
+    }
 }
 
 function Invoke-SccacheControl {

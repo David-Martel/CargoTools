@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# cargo-macos.ps1 - CargoTools v0.9.0 macOS/Apple cross-compile shim
+# cargo-macos.ps1 - CargoTools v0.9.1 macOS/Apple cross-compile shim
 # Loads CargoTools module and calls Invoke-CargoMacos.
 $ErrorActionPreference = 'Stop'
 [string[]]$ArgumentList = @($args)

@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# cargo-wrapper.ps1 - CargoTools v0.9.0 Windows/MSVC build shim
+# cargo-wrapper.ps1 - CargoTools v0.9.1 Windows/MSVC build shim
 # Loads CargoTools module and calls Invoke-CargoWrapper.
 $ErrorActionPreference = 'Stop'
 [string[]]$ArgumentList = @($args)

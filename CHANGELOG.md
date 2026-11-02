@@ -10,7 +10,25 @@
 - **Install-Wrappers.ps1 v0.9.0**: Deploys `_WrapperHelpers.psm1` alongside .ps1 wrappers to both `~/.local/bin` and `~/bin`. Added post-deploy verification step that imports the helper and asserts version matches manifest.
 - **Pester test suite**: New `Tests/Wrappers.Tests.ps1` covering flag parsing, LlmEvent JSON shape, MODULE_NOT_FOUND recovery, argument pass-through fidelity, per-wrapper --help/--version/--list-wrappers, and --doctor JSON schema.
 
-## Unreleased
+## 0.9.1
+- **Fix: cargo's `-V` and `-vV` no longer collide with the wrapper's `-v`/`-vv`.** PowerShell
+  `switch` and `-contains` ignore case, so `cargo -V` was swallowed as verbose mode (cargo then
+  printed its help) and `cargo -vV` switched on debug output. `Initialize-CargoVerbosity` and
+  `Get-VerbosityArgs` now match case-sensitively, as do the rust-analyzer standalone check and
+  the `cargo run` separator logic. Covered by new cases in `Tests/Invoke-CargoWrapper.Tests.ps1`
+  and `Tests/Invoke-CargoWrapper.Contract.Tests.ps1` (`-V`, `-vV`, `-p x`, `-- --flag` reach
+  cargo unchanged; the wrapper's own `-v`, `-vv`, `--verbose`, `-q` are still consumed).
+- **Fix: sccache servers that were healthy were treated as absent, so builds ran uncached.**
+  On Windows build 26300 `GetActiveTcpListeners()` omits live loopback listeners, even one the
+  same process just bound. `Test-SccacheEndpointListening` trusted it alone, so every wrapped
+  run chose another port, started a second server, then reported "listener disappeared" and
+  built without a cache. It now falls back to a closed-at-once loopback connect, which sends no
+  protocol bytes. `Resolve-FreeSccachePort` also prefers a healthy server on the configured
+  port over a stale `resolved-port.txt`, and rewrites the state file to match. Covered by
+  `Tests/SccacheLifecycle.Tests.ps1` (the previously failing "exact live listener" test plus
+  closed-port control) and `Tests/Reconciliation.Tests.ps1`.
+
+### Also in this release (previously Unreleased)
 - **DTM-P1GEN9 Dev Drive profile and cache-drive fallback** (rebuilt from the unique parts
   of PR #15 on top of current main; the NUC entry there is superseded by #16 and was not
   carried over).

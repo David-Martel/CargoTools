@@ -1,5 +1,5 @@
 #Requires -Modules Pester
-# Wrappers.Tests.ps1 — CargoTools v0.9.0 wrapper layer tests
+# Wrappers.Tests.ps1 — CargoTools v0.9.1 wrapper layer tests
 # Tests: _WrapperHelpers.psm1 + all 9 wrapper scripts
 
 # NOTE: In Pester 5, script-level variables set at parse time DO persist through
@@ -129,8 +129,8 @@ Describe 'Get-CargoToolsVersion' {
     It 'returns a semver string' {
         Get-CargoToolsVersion | Should -Match '^\d+\.\d+\.\d+$'
     }
-    It 'returns 0.9.0' {
-        Get-CargoToolsVersion | Should -Be '0.9.0'
+    It 'returns 0.9.1' {
+        Get-CargoToolsVersion | Should -Be '0.9.1'
     }
 }
 
@@ -663,8 +663,8 @@ Describe 'Per-wrapper native flag pass-through binding' {
 # ---------------------------------------------------------------------------
 Describe 'CargoTools.psd1 manifest checks' {
     BeforeAll { $script:PsdData = Import-PowerShellDataFile -Path (Join-Path $script:ModuleRoot 'CargoTools.psd1') }
-    It 'ModuleVersion equals 0.9.0' {
-        $script:PsdData.ModuleVersion | Should -Be '0.9.0'
+    It 'ModuleVersion equals 0.9.1' {
+        $script:PsdData.ModuleVersion | Should -Be '0.9.1'
     }
     It 'FileList contains wrappers\_WrapperHelpers.psm1 (any separator form)' {
         # FileList uses double-backslash in psd1 single-quoted strings

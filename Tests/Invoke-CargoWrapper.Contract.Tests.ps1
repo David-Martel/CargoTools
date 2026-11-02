@@ -162,6 +162,34 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
         $exitCode | Should -Be 37
     }
 
+    It 'forwards cargo-owned flag <Label> to cargo unchanged' -ForEach @(
+        # Why: the wrapper's own -v/-vv verbosity flags are lower case. Cargo's -V (version) and
+        # -vV (verbose version) differ only by case and used to be swallowed (-V) or turned into
+        # debug mode (-vV) by the case-insensitive match. See LEARNED_RULES 128.
+        @{ Label = '-V'; CargoArgs = @('-V'); Expected = @('-V') }
+        @{ Label = '-vV'; CargoArgs = @('-vV'); Expected = @('-vV') }
+        @{ Label = 'build -V'; CargoArgs = @('build', '-V'); Expected = @('build', '-V') }
+        @{ Label = '-p x'; CargoArgs = @('check', '-p', 'x'); Expected = @('check', '-p', 'x') }
+        @{ Label = '-- --flag'; CargoArgs = @('test', '--', '--flag'); Expected = @('test', '--', '--flag') }
+        @{ Label = '-- -v (child)'; CargoArgs = @('test', '--', '-v'); Expected = @('test', '--', '-v') }
+    ) {
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        $null = @(Invoke-CargoWrapper -ArgumentList $CargoArgs)
+        $calls = @(Read-NativeCall)
+        $calls.Count | Should -Be 1
+        $calls[0] | Should -Be (@('run', 'stable', 'cargo') + $Expected)
+    }
+
+    It 'still consumes the wrapper-owned <Flag> flag and does not forward it' -ForEach @(
+        @{ Flag = '-v' }, @{ Flag = '-vv' }, @{ Flag = '--verbose' }, @{ Flag = '-q' }
+    ) {
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        $null = @(Invoke-CargoWrapper -ArgumentList @('check', $Flag))
+        $calls = @(Read-NativeCall)
+        $calls.Count | Should -Be 1
+        $calls[0] | Should -Be @('run', 'stable', 'cargo', 'check')
+    }
+
     It 'retains an explicit raw separator and wrapper-looking child switches' {
         $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
         $result = @(Invoke-CargoWrapper -ArgumentList @('--raw', 'test', 'filter', '--', '--nocapture', '--nextest', '--fix'))

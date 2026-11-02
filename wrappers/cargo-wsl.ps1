@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# cargo-wsl.ps1 - CargoTools v0.9.0 WSL/Linux build shim
+# cargo-wsl.ps1 - CargoTools v0.9.1 WSL/Linux build shim
 # Loads CargoTools module and calls Invoke-CargoWsl.
 $ErrorActionPreference = 'Stop'
 [string[]]$ArgumentList = @($args)

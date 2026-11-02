@@ -47,6 +47,19 @@ Describe 'Verbosity System' {
             & $script:InitVerbosity @('--debug')
             & $script:GetVerbosity | Should -Be 3
         }
+        It 'Does not treat cargo -V (version) as wrapper -v' {
+            # Why: PowerShell switch/-eq are case-insensitive, so -V used to select verbose (2).
+            & $script:InitVerbosity @('-V')
+            & $script:GetVerbosity | Should -Be 1
+        }
+        It 'Does not treat cargo -vV (verbose version) as wrapper -vv' {
+            & $script:InitVerbosity @('-vV')
+            & $script:GetVerbosity | Should -Be 1
+        }
+        It 'Does not treat -Q or -VV as wrapper flags' {
+            & $script:InitVerbosity @('-Q', '-VV')
+            & $script:GetVerbosity | Should -Be 1
+        }
         It 'Reads CARGO_VERBOSITY env var' {
             $env:CARGO_VERBOSITY = '2'
             try {
@@ -91,6 +104,10 @@ Describe 'Verbosity System' {
         It 'Removes -vv' {
             $result = & $script:GetVerbosityArgs @('build', '-vv')
             $result | Should -Not -Contain '-vv'
+        }
+        It 'Keeps cargo -V, -vV and -Q (case differs from wrapper flags)' {
+            $result = @(& $script:GetVerbosityArgs @('-V', '-vV', '-Q', 'build'))
+            $result | Should -Be @('-V', '-vV', '-Q', 'build')
         }
         It 'Removes --llm-output' {
             $result = & $script:GetVerbosityArgs @('build', '--llm-output', '--release')

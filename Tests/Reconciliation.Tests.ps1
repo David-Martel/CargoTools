@@ -35,6 +35,17 @@ Describe 'Persisted sccache port scope' {
         $actual | Should -Be '4369'
     }
 
+    It 'prefers a healthy server on the configured port over stale persisted state' {
+        # Why: a stale resolved-port.txt sent every build to a second, empty server while the
+        # shared server on the configured port stayed idle (dtm-p1gen9, 2026-11-02).
+        Set-Content -LiteralPath (Join-Path $script:PortRoot 'sccache/resolved-port.txt') -Value '4293'
+        Mock Test-SccacheEndpointListening -ModuleName CargoTools { $Port -eq 4810 }
+        Mock Test-SccacheHealth -ModuleName CargoTools { [pscustomobject]@{ Healthy = ($Port -eq 4810) } }
+        $actual = & $script:CargoModule { param($root) Resolve-FreeSccachePort -DesiredPort '4810' -CacheRoot $root } $script:PortRoot
+        $actual | Should -Be '4810'
+        (Get-Content -LiteralPath (Join-Path $script:PortRoot 'sccache/resolved-port.txt') -Raw).Trim() | Should -Be '4810'
+    }
+
     It 'ignores out-of-range persisted ports' {
         Set-Content -LiteralPath (Join-Path $script:PortRoot 'sccache/resolved-port.txt') -Value '70000'
         $actual = & $script:CargoModule { param($root) Resolve-FreeSccachePort -DesiredPort '4500' -CacheRoot $root } $script:PortRoot

@@ -191,6 +191,28 @@ Describe 'Passive listener health checks against owned TCP fixtures' {
     }
 }
 
+Describe 'Listener detection when the OS listener table omits a live listener' {
+    # Why: on dtm-p1gen9 (Windows build 26300) GetActiveTcpListeners() did not report a loopback
+    # listener that the same process had just bound, so a healthy sccache server looked absent and
+    # every wrapped build started a second server ("listener disappeared"). The connect fallback
+    # must still find the listener, and must not report a closed port.
+    BeforeEach {
+        $script:Listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $script:Listener.Start()
+        $script:LivePort = $script:Listener.LocalEndpoint.Port
+        $script:EndpointCheck = & (Get-Module CargoTools) { ${function:Test-SccacheEndpointListening} }
+    }
+    AfterEach { $script:Listener.Stop() }
+    It 'finds a live loopback listener' {
+        & $script:EndpointCheck -Port $script:LivePort | Should -BeTrue
+    }
+    It 'reports a closed port as not listening' {
+        $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        try { $probe.Start(); $closed = $probe.LocalEndpoint.Port } finally { $probe.Stop() }
+        & $script:EndpointCheck -Port $closed | Should -BeFalse
+    }
+}
+
 Describe 'Bounded native sccache control client' {
     It 'Preserves an actual native failure without launching sccache' {
         Mock Resolve-Sccache -ModuleName CargoTools { (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source }

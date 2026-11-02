@@ -259,7 +259,9 @@ function Initialize-CargoVerbosity {
 
     # Arguments override env
     foreach ($arg in $Arguments) {
-        switch ($arg) {
+        # -CaseSensitive: cargo owns -V (version) and -vV (verbose version); only the lower-case
+        # spellings are wrapper verbosity flags (LEARNED_RULES 128).
+        switch -CaseSensitive ($arg) {
             '-q' { $script:VerbosityLevel = 0 }
             '--quiet' { $script:VerbosityLevel = 0 }
             '-v' { $script:VerbosityLevel = 2 }
@@ -290,7 +292,7 @@ function Get-VerbosityArgs {
     $filtered = New-Object System.Collections.Generic.List[string]
 
     foreach ($arg in $Arguments) {
-        if ($verbosityArgs -notcontains $arg) {
+        if ($verbosityArgs -cnotcontains $arg) {
             $filtered.Add($arg)
         }
     }
