@@ -527,12 +527,19 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
         }
         if ($useFastlink -and -not $useLld) { Add-RustFlags '-C link-arg=/DEBUG:FASTLINK' }
 
+        $noSccacheConfig = @()
         $sccacheOk = Start-SccacheServer
         if (-not $sccacheOk) {
             # sccache failed to start - clear RUSTC_WRAPPER to prevent cargo from trying
             # to invoke a non-functional sccache, which would produce confusing errors
             if (Test-SccacheRustcWrapper -Wrapper $env:RUSTC_WRAPPER) {
                 Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
+                # Removing the variable lets a Cargo config `build.rustc-wrapper = "sccache"` (CARGO_HOME
+                # config.toml) apply again, so Cargo would still run rustc through the dead sccache. An empty
+                # RUSTC_WRAPPER would override it, but PowerShell deletes a variable assigned '', so the empty
+                # override goes on the command line. One token, so Get-PrimaryCommand still skips it.
+                $noSccacheConfig = @('--config=build.rustc-wrapper=""')
+                $passThrough.Insert(0, $noSccacheConfig[0])
                 Write-CargoStatus -Phase 'Environment' -Message 'sccache unavailable, building without cache acceleration' -Type 'Warning' -MinVerbosity 1
             }
         } else {
@@ -805,7 +812,9 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                     }
 
                     $profile = Get-BuildProfile $passThrough.ToArray()
-                    $nextestArgs = @('nextest', 'run')
+                    # The post-build runs need the same override: nextest's own `cargo test --no-run` would
+                    # otherwise compile through the dead sccache from the config file.
+                    $nextestArgs = @('nextest', 'run') + $noSccacheConfig
                     if ($scopeArgs.Count -gt 0) {
                         $nextestArgs += $scopeArgs.ToArray()
                     } else {
@@ -828,7 +837,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                     }
 
                     if ($runPostBuildDoctest -and (Test-DoctestEligibleScope -RustupPath $rustupPath -Toolchain $toolchain -ScopeArgs $scopeArgs.ToArray())) {
-                        $docArgs = @('test')
+                        $docArgs = $noSccacheConfig + @('test')
                         if ($scopeArgs.Count -gt 0) {
                             $docArgs += $scopeArgs.ToArray()
                         } else {
