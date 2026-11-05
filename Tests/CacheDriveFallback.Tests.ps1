@@ -28,6 +28,14 @@ BeforeAll {
     # A drive letter nothing is mounted on, found without touching any real drive.
     $script:freeLetter = (68..90 | ForEach-Object { [char]$_ } |
         Where-Object { -not (Test-Path -LiteralPath "${_}:\") } | Select-Object -Last 1)
+
+    function Set-TestPathPassThroughMock {
+        # Tests mock Test-Path for one drive root (-ParameterFilter) and expect every other call to reach the real
+        # cmdlet. Pester 5 did that implicitly; Pester 6 throws "No mock for command 'Test-Path' matched" instead, which
+        # failed 5 tests in CI (Pester 6.2.0, 2026-11-05). This default mock restores the pass-through explicitly (the
+        # module-qualified call bypasses the mock); filtered mocks still take precedence for their drive.
+        Mock Test-Path -ModuleName CargoTools { Microsoft.PowerShell.Management\Test-Path @PesterBoundParameters }
+    }
 }
 
 AfterAll {
@@ -70,6 +78,7 @@ Describe 'Get-DefaultMachineConfig cache root' {
         Mock Get-MsvcInfo -ModuleName CargoTools { $null }
         Mock Get-LlvmInfo -ModuleName CargoTools { $null }
         Mock Get-WindowsSdkInfo -ModuleName CargoTools { $null }
+        Set-TestPathPassThroughMock
     }
 
     # Join-Path needs a registered T: PSDrive; a host without one cannot exercise this branch.
@@ -254,6 +263,7 @@ Describe 'Tracked machine registry (Config/machines-cargo.json)' {
         Mock Get-MachineIdentity -ModuleName CargoTools { 'DTM-P1GEN9' }
         Mock Get-DefaultMachineConfig -ModuleName CargoTools { @{ CacheRoot = 'C:\default' } }
         Mock Register-CurrentMachine -ModuleName CargoTools { throw 'a known machine must not be re-registered' }
+        Set-TestPathPassThroughMock
         # The entry's T: paths are only honoured while T: is mounted; do not depend on this host.
         Mock Test-Path -ModuleName CargoTools { $true } -ParameterFilter { $LiteralPath -eq 'T:\' }
         try {
@@ -278,6 +288,7 @@ Describe 'Get-MachineConfig with the registered Dev Drive unmounted' {
             }
         }.GetNewClosure()
         Mock Register-CurrentMachine -ModuleName CargoTools { throw 'a known machine must not be re-registered' }
+        Set-TestPathPassThroughMock
     }
     AfterEach { & $script:module { $script:MachineConfig = $null } }
 
