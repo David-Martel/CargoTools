@@ -159,6 +159,17 @@ Describe 'Test-CargoToolsInstall' {
         $desktop.Text | Should -Match ([regex]::Escape("from $($install.Module)"))
     }
 
+    It 'resolves a junction whose target passes through another junction' {
+        # Review of #28 (codex): only the first hop was followed, so alias -> redirect\CargoTools -> real stayed two copies.
+        $install = New-GitInstall
+        $redirect = Join-Path (New-Root) 'redirect'
+        [void](New-Item -ItemType Junction -Path $redirect -Target $install.Root)
+        $aliasRoot = New-Root
+        [void](New-Item -ItemType Junction -Path (Join-Path $aliasRoot 'CargoTools') -Target (Join-Path $redirect 'CargoTools'))
+        $result = Invoke-InstallCheck @($install.Root, $aliasRoot)
+        $result.Code | Should -Be 0 -Because $result.Text
+    }
+
     It 'still fails a real second copy next to a junction (control for the case above)' {
         $install = New-GitInstall
         $linkRoot = New-Root

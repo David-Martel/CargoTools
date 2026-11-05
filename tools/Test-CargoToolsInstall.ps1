@@ -75,10 +75,13 @@ if ($a.override) { $env:PSModulePath = $a.override.Replace('{edition}', [string]
 $r = [ordered]@{ machine = [Environment]::MachineName; bases = @(); strays = @(); gitTop = $null; dirty = $null
     statusFailed = $false; fetchFailed = $false; head = $null; remote = $null; manifestVersion = $null; version = $null
     base = $null; buildEnvironment = $null; error = $null }
-function Resolve-PhysicalPath([string]$Path) {
+function Resolve-PhysicalPath([string]$Path, [int]$Depth = 0) {
     # Follows junctions and symbolic links in every path component, so a link to the checkout counts as the checkout,
-    # not as a second copy (dtm-work gives Windows PowerShell 5.1 the OneDrive clone through a junction).
+    # not as a second copy (dtm-work gives Windows PowerShell 5.1 the OneDrive clone through a junction). A link's
+    # target is resolved the same way, so chains and links inside a target resolve too; past 32 hops (a cycle) the
+    # path stays as it is, so a cycle cannot make two copies look like one.
     $full = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+    if ($Depth -gt 32) { return $full }
     $root = [IO.Path]::GetPathRoot($full)
     $current = $root.TrimEnd('\', '/')
     foreach ($part in $full.Substring($root.Length).Split([char[]]@('\', '/'), [StringSplitOptions]::RemoveEmptyEntries)) {
@@ -87,7 +90,7 @@ function Resolve-PhysicalPath([string]$Path) {
         if ($item -and ($item.LinkType -eq 'Junction' -or $item.LinkType -eq 'SymbolicLink') -and $item.Target) {
             $target = (@($item.Target)[0]) -replace '^\\\\\?\\', ''
             if (-not [IO.Path]::IsPathRooted($target)) { $target = Join-Path (Split-Path -Parent $current) $target }
-            $current = [IO.Path]::GetFullPath($target).TrimEnd('\', '/')
+            $current = Resolve-PhysicalPath $target ($Depth + 1)
         }
     }
     return $current
