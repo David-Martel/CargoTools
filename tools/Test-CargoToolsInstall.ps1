@@ -4,20 +4,26 @@ Checks that every PowerShell session on this host loads CargoTools from one up-t
 
 .DESCRIPTION
 A copied, unversioned CargoTools drifts silently: dtm-p1gen7 ran a hand-patched 0.9.0 copy long after main had moved
-on, and nothing reported it. This script starts fresh sessions (pwsh -NoProfile and pwsh with the profile, and the same
-over ssh with -SshTarget) and in each one checks that:
+on, and nothing reported it. This script starts fresh sessions (pwsh -NoProfile, pwsh with the profile and Windows
+PowerShell 5.1, and the same over ssh with -SshTarget) and in each one checks that:
 
   1. exactly one CargoTools module base is on PSModulePath (a second copy can shadow the first);
-  2. that base is the top level of a git work tree with no uncommitted changes to tracked files;
-  3. its HEAD is origin/main (fetched first unless -NoFetch);
-  4. Import-Module CargoTools loads that base, at the version its manifest declares;
-  5. with -BuildEnvironment, Test-BuildEnvironment -Detailed runs without throwing.
+  2. no other CargoTools sits in a per-user module folder (<Documents>\PowerShell\Modules or
+     <Documents>\WindowsPowerShell\Modules). PowerShell adds those folders to PSModulePath on its own, and when
+     Documents is OneDrive-synced another host's clone can arrive there: dtm-work keeps its clone in a Documents
+     that dtm-p1gen7 also syncs;
+  3. that base is the top level of a git work tree with no uncommitted changes to tracked files;
+  4. its HEAD is origin/main, fetched first unless -NoFetch. A failed fetch fails the check, because the cached ref
+     cannot show whether HEAD is current;
+  5. Import-Module CargoTools loads that base, at the version its manifest declares;
+  6. with -BuildEnvironment, Test-BuildEnvironment -Detailed runs without throwing.
 
 It prints one [PASS] or [FAIL] line per session and exits 0 when every session passes, otherwise 1. It compiles
 nothing. Tests/InstallCheck.Tests.ps1 covers it, including the failures it must report.
 
 .PARAMETER Session
-Which local sessions to probe: NoProfile, Profile, or both (default).
+Which sessions to probe: NoProfile (pwsh -NoProfile), Profile (pwsh) and Desktop (powershell.exe -NoProfile, Windows
+PowerShell 5.1). The default is all three.
 
 .PARAMETER SshTarget
 Also probe the same sessions over ssh on this target (for example localhost). The remote default shell must run
@@ -36,44 +42,59 @@ Also run Test-BuildEnvironment -Detailed in each session.
 Replace PSModulePath inside each probe session before the checks. Tests use it to point the check at fixture
 directories; a real check leaves it unset.
 
+.PARAMETER UserModuleRootOverride
+Replace the per-user module folders that check 2 scans. Tests use it; a real check leaves it unset.
+
 .EXAMPLE
 ./tools/Test-CargoToolsInstall.ps1 -BuildEnvironment -SshTarget localhost
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('NoProfile', 'Profile')][string[]]$Session = @('NoProfile', 'Profile'),
+    [ValidateSet('NoProfile', 'Profile', 'Desktop')][string[]]$Session = @('NoProfile', 'Profile', 'Desktop'),
     [string]$SshTarget,
     [string]$Branch = 'main',
     [switch]$NoFetch,
     [switch]$BuildEnvironment,
-    [string]$PSModulePathOverride
+    [string]$PSModulePathOverride,
+    [string[]]$UserModuleRootOverride
 )
 
 $ErrorActionPreference = 'Stop'
 
 # Runs inside each probe session and prints one tagged JSON line. Parameters arrive as a JSON argument so the same
-# text works locally and over ssh.
+# text works locally, over ssh and in Windows PowerShell 5.1. Native commands run under 'Continue': 5.1 turns
+# redirected stderr into a terminating error under 'Stop', and every native result is checked through $LASTEXITCODE.
 $probe = @'
 param([string]$ArgsJson)
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
 $a = $ArgsJson | ConvertFrom-Json
 if ($a.override) { $env:PSModulePath = $a.override }
-$r = [ordered]@{ bases = @(); gitTop = $null; dirty = $null; head = $null; remote = $null; manifestVersion = $null
-    version = $null; base = $null; buildEnvironment = $null; error = $null }
+$r = [ordered]@{ bases = @(); strays = @(); gitTop = $null; dirty = $null; fetchFailed = $false; head = $null
+    remote = $null; manifestVersion = $null; version = $null; base = $null; buildEnvironment = $null; error = $null }
 try {
     $r.bases = @(Get-Module -ListAvailable CargoTools | ForEach-Object { $_.ModuleBase } | Select-Object -Unique)
+    $docs = [Environment]::GetFolderPath('MyDocuments')
+    $userRoots = if ($a.userRoots) { @($a.userRoots) } else { @((Join-Path $docs 'PowerShell\Modules'), (Join-Path $docs 'WindowsPowerShell\Modules')) }
+    $known = @($r.bases | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\', '/') })
+    $r.strays = @(foreach ($root in $userRoots) {
+        $candidate = Join-Path $root 'CargoTools'
+        if ((Test-Path -LiteralPath $candidate) -and ($known -notcontains [IO.Path]::GetFullPath($candidate).TrimEnd('\', '/'))) { $candidate }
+    })
     if ($r.bases.Count -eq 1) {
         $base = $r.bases[0]
-        $r.manifestVersion = [string](Import-PowerShellDataFile (Join-Path $base 'CargoTools.psd1')).ModuleVersion
+        $r.manifestVersion = [string](Import-PowerShellDataFile (Join-Path $base 'CargoTools.psd1') -ErrorAction Stop).ModuleVersion
         $top = git -C $base rev-parse --show-toplevel 2>$null
         if ($LASTEXITCODE -eq 0 -and $top) {
             $r.gitTop = [IO.Path]::GetFullPath($top)
             $r.dirty = [bool](git -C $base status --porcelain --untracked-files=no)
-            if ($a.fetch) { git -C $base fetch --quiet origin $a.branch 2>$null | Out-Null }
+            if ($a.fetch) {
+                git -C $base fetch --quiet origin $a.branch 2>$null | Out-Null
+                $r.fetchFailed = $LASTEXITCODE -ne 0
+            }
             $r.head = git -C $base rev-parse HEAD
             $r.remote = git -C $base rev-parse --verify --quiet "refs/remotes/origin/$($a.branch)"
         }
-        Import-Module CargoTools -Force
+        Import-Module CargoTools -Force -ErrorAction Stop
         $m = Get-Module CargoTools
         $r.version = [string]$m.Version
         $r.base = $m.ModuleBase
@@ -83,8 +104,8 @@ try {
 'CARGOTOOLS_PROBE ' + ($r | ConvertTo-Json -Compress)
 '@
 
-$argsJson = @{ override = $PSModulePathOverride; branch = $Branch; fetch = -not $NoFetch; buildEnvironment = [bool]$BuildEnvironment } |
-    ConvertTo-Json -Compress
+$argsJson = @{ override = $PSModulePathOverride; userRoots = @($UserModuleRootOverride | Where-Object { $_ }); branch = $Branch
+    fetch = -not $NoFetch; buildEnvironment = [bool]$BuildEnvironment } | ConvertTo-Json -Compress
 # -EncodedCommand cannot take script arguments, so the arguments are embedded as a literal in the command.
 $command = "& { $probe } -ArgsJson '$($argsJson -replace "'", "''")'"
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
@@ -95,9 +116,11 @@ function Get-SessionFailure([object]$r) {
     if ($null -eq $r) { return 'the probe printed no result' }
     if ($r.bases.Count -eq 0) { return 'CargoTools is not on PSModulePath' }
     if ($r.bases.Count -gt 1) { return "$($r.bases.Count) CargoTools copies on PSModulePath ($($r.bases -join '; ')); one can shadow the other" }
+    if (@($r.strays).Count) { return "CargoTools copy in a per-user module folder that PowerShell can add to PSModulePath ($(@($r.strays) -join '; ')); with a OneDrive-synced Documents it may be another host's clone" }
     $base = [IO.Path]::GetFullPath($r.bases[0]).TrimEnd('\', '/')
     if (-not $r.gitTop -or -not [string]::Equals($r.gitTop.TrimEnd('\', '/'), $base, [StringComparison]::OrdinalIgnoreCase)) { return "$base is not a git checkout" }
     if ($r.dirty) { return "$base has uncommitted changes to tracked files" }
+    if ($r.fetchFailed) { return "git fetch origin $Branch failed in $base, so the cached origin/$Branch cannot show whether HEAD is current" }
     if (-not $r.remote) { return "$base has no origin/$Branch ref" }
     if ($r.head -ne $r.remote) { return "$base HEAD $($r.head) is not origin/$Branch $($r.remote)" }
     if ($r.error) { return "import failed: $($r.error)" }
@@ -108,10 +131,12 @@ function Get-SessionFailure([object]$r) {
 }
 
 $runs = foreach ($s in $Session) {
-    $flags = @('-NoLogo') + $(if ($s -eq 'NoProfile') { @('-NoProfile') } else { @() }) + @('-EncodedCommand', $encoded)
-    @{ Name = "local $s"; Output = { & $pwsh @flags 2>&1 }.GetNewClosure() }
+    $exe = if ($s -eq 'Desktop') { 'powershell' } else { 'pwsh' }
+    $local = if ($s -eq 'Desktop') { (Get-Command powershell -CommandType Application | Select-Object -First 1).Source } else { $pwsh }
+    $flags = @('-NoLogo') + $(if ($s -ne 'Profile') { @('-NoProfile') } else { @() }) + @('-EncodedCommand', $encoded)
+    @{ Name = "local $s"; Output = { & $local @flags 2>&1 }.GetNewClosure() }
     if ($SshTarget) {
-        $remote = "pwsh $($flags -join ' ')"
+        $remote = "$exe $($flags -join ' ')"
         @{ Name = "ssh $SshTarget $s"; Output = { & ssh -o BatchMode=yes -o ConnectTimeout=15 $SshTarget $remote 2>&1 }.GetNewClosure() }
     }
 }

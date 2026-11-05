@@ -2,18 +2,21 @@
 # tools/Test-CargoToolsInstall.ps1 decides whether a host loads CargoTools from one current git checkout. Why: a
 # hand-copied 0.9.0 sat on dtm-p1gen7's PSModulePath, patched in place, while main moved to 0.9.2; nothing failed, so
 # nobody noticed. These cases prove the check fails for each way that state can recur (no module, an unversioned copy,
-# a second copy, a stale HEAD, local edits) and passes for a clean checkout at origin/main. They point the check at
-# fixture directories through -PSModulePathOverride, use no network (-NoFetch) and compile nothing. The case tagged
-# Integration checks the real host and is excluded from CI.
+# a second copy, a copy in a per-user module folder, a stale HEAD, a failed fetch, local edits) and passes for a clean
+# checkout at origin/main, in pwsh and in Windows PowerShell 5.1. They point the check at fixture directories through
+# -PSModulePathOverride and -UserModuleRootOverride, use no network and compile nothing. The case tagged Integration
+# checks the real host and is excluded from CI.
 
 BeforeAll {
     $script:RepoRoot = Split-Path -Parent $PSScriptRoot
     $script:Check = Join-Path $script:RepoRoot 'tools/Test-CargoToolsInstall.ps1'
     $script:Pwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
 
-    function Invoke-InstallCheck([string[]]$ModulePath, [string[]]$Extra = @()) {
-        $output = & $script:Pwsh -NoLogo -NoProfile -File $script:Check -Session NoProfile -NoFetch `
-            -PSModulePathOverride ($ModulePath -join [IO.Path]::PathSeparator) @Extra 2>&1 | Out-String
+    function Invoke-InstallCheck([string[]]$ModulePath, [string]$Session = 'NoProfile', [string]$UserRoot = (New-Root), [switch]$Fetch) {
+        # $UserRoot stands in for <Documents>\PowerShell\Modules, so the host's own Documents never decides a case.
+        $extra = @(if (-not $Fetch) { '-NoFetch' })
+        $output = & $script:Pwsh -NoLogo -NoProfile -File $script:Check -Session $Session @extra `
+            -PSModulePathOverride ($ModulePath -join [IO.Path]::PathSeparator) -UserModuleRootOverride $UserRoot 2>&1 | Out-String
         return @{ Code = $LASTEXITCODE; Text = $output }
     }
     function New-Root {
@@ -86,6 +89,29 @@ Describe 'Test-CargoToolsInstall' {
         $result = Invoke-InstallCheck @($install.Root)
         $result.Code | Should -Be 1 -Because $result.Text
         $result.Text | Should -Match 'uncommitted changes'
+    }
+
+    It 'fails when the fetch fails instead of trusting the cached origin/main' {
+        # Review of #25 (codex): a failed fetch left the old ref in place, so a stale checkout passed.
+        $install = New-GitInstall
+        git -C $install.Module remote set-url origin (Join-Path $TestDrive 'no-such-remote')
+        $result = Invoke-InstallCheck @($install.Root) -Fetch
+        $result.Code | Should -Be 1 -Because $result.Text
+        $result.Text | Should -Match 'git fetch origin main failed'
+    }
+
+    It 'fails when a per-user module folder holds another copy, even off PSModulePath' {
+        # dtm-work keeps its clone in a OneDrive-synced Documents that dtm-p1gen7 also syncs; once synced it would sit in
+        # <Documents>\PowerShell\Modules, which pwsh puts first on PSModulePath.
+        $result = Invoke-InstallCheck @((New-GitInstall).Root) -UserRoot (New-CopyInstall).Root
+        $result.Code | Should -Be 1 -Because $result.Text
+        $result.Text | Should -Match 'per-user module folder'
+    }
+
+    It 'passes the same clean checkout in Windows PowerShell 5.1' {
+        $result = Invoke-InstallCheck @((New-GitInstall).Root) -Session Desktop
+        $result.Code | Should -Be 0 -Because $result.Text
+        $result.Text | Should -Match '\[PASS\] local Desktop: '
     }
 
     It 'passes on this host in every session, with Test-BuildEnvironment' -Tag 'Integration' {
