@@ -329,6 +329,12 @@ Describe 'System-wide shim' {
         }
 
         It 'Should resolve before any rust-analyzer.exe in PATH' {
+            # Only a host with the shim deployed promises that it wins; elsewhere rustup's rust-analyzer.exe is the
+            # expected resolution, so this skips for the same reason as 'Should exist' (it failed on dtm-work).
+            if (-not (Test-Path $script:ShimPath)) {
+                Set-ItResult -Skipped -Because "wrappers not deployed (run tools/Install-Wrappers.ps1 to enable this test)"
+                return
+            }
             $cmd = Get-Command rust-analyzer -ErrorAction SilentlyContinue
             if ($cmd) {
                 # Should be a CargoTools shim (.cmd or .ps1) deployed to either ~/.local/bin or ~/bin,

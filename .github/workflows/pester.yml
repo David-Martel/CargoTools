@@ -110,9 +110,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          # --version (must print 3 version lines)
-          $vOut = (pwsh -NoProfile -File ./wrappers/cargo.ps1 --version) -join "`n"
-          if ($vOut -notmatch 'CargoTools wrapper/cargo v\d+\.\d+\.\d+') { throw "--version output unexpected: $vOut" }
+          # --wrapper-version prints the wrapper banner. Since 0.9.2 --version belongs to cargo and is forwarded, so
+          # checking it for the banner fails on every run.
+          $vOut = (pwsh -NoProfile -File ./wrappers/cargo.ps1 --wrapper-version) -join "`n"
+          if ($vOut -notmatch 'CargoTools wrapper/cargo v\d+\.\d+\.\d+') { throw "--wrapper-version output unexpected: $vOut" }
 
           # --help (must include WRAPPER FLAGS section)
           $hOut = (pwsh -NoProfile -File ./wrappers/cargo.ps1 --help) -join "`n"
