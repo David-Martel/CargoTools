@@ -71,8 +71,9 @@ param([string]$ArgsJson)
 $ErrorActionPreference = 'Continue'
 $a = $ArgsJson | ConvertFrom-Json
 if ($a.override) { $env:PSModulePath = $a.override.Replace('{edition}', [string]$PSVersionTable.PSEdition) }
-$r = [ordered]@{ bases = @(); strays = @(); gitTop = $null; dirty = $null; statusFailed = $false; fetchFailed = $false; head = $null
-    remote = $null; manifestVersion = $null; version = $null; base = $null; buildEnvironment = $null; error = $null }
+$r = [ordered]@{ machine = [Environment]::MachineName; bases = @(); strays = @(); gitTop = $null; dirty = $null
+    statusFailed = $false; fetchFailed = $false; head = $null; remote = $null; manifestVersion = $null; version = $null
+    base = $null; buildEnvironment = $null; error = $null }
 try {
     $r.bases = @(Get-Module -ListAvailable CargoTools | ForEach-Object { $_.ModuleBase } | Select-Object -Unique)
     $docs = [Environment]::GetFolderPath('MyDocuments')
@@ -80,7 +81,11 @@ try {
     $known = @($r.bases | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\', '/') })
     $r.strays = @(foreach ($root in $userRoots) {
         $candidate = Join-Path $root 'CargoTools'
-        if ((Test-Path -LiteralPath $candidate) -and ($known -notcontains [IO.Path]::GetFullPath($candidate).TrimEnd('\', '/'))) { $candidate }
+        if (-not (Test-Path -LiteralPath $candidate)) { continue }
+        $container = [IO.Path]::GetFullPath($candidate).TrimEnd('\', '/')
+        # A versioned install (CargoTools\0.9.2) reports the version folder as its base, inside this container.
+        $isKnown = @($known | Where-Object { $_ -eq $container -or $_.StartsWith($container + '\', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+        if (-not $isKnown) { $candidate }
     })
     if ($r.bases.Count -eq 1) {
         $base = $r.bases[0]
@@ -139,15 +144,16 @@ $runs = foreach ($s in $Session) {
     $exe = if ($s -eq 'Desktop') { 'powershell' } else { 'pwsh' }
     $local = if ($s -eq 'Desktop') { (Get-Command powershell -CommandType Application | Select-Object -First 1).Source } else { $pwsh }
     $flags = @('-NoLogo') + $(if ($s -ne 'Profile') { @('-NoProfile') } else { @() }) + @('-EncodedCommand', $encoded)
-    @{ Name = "local $s"; Host = 'local'; Output = { & $local @flags 2>&1 }.GetNewClosure() }
+    @{ Name = "local $s"; Output = { & $local @flags 2>&1 }.GetNewClosure() }
     if ($SshTarget) {
         $remote = "$exe $($flags -join ' ')"
-        @{ Name = "ssh $SshTarget $s"; Host = "ssh $SshTarget"; Output = { & ssh -o BatchMode=yes -o ConnectTimeout=15 $SshTarget $remote 2>&1 }.GetNewClosure() }
+        @{ Name = "ssh $SshTarget $s"; Output = { & ssh -o BatchMode=yes -o ConnectTimeout=15 $SshTarget $remote 2>&1 }.GetNewClosure() }
     }
 }
 
 $failed = 0
-$selected = @{}   # host -> the base its first passing session loaded
+# Keyed by the machine name each probe reports, so ssh to localhost and local sessions count as one host.
+$selected = @{}   # machine -> the base its first passing session loaded
 foreach ($run in $runs) {
     $lines = @(& $run.Output | ForEach-Object { [string]$_ })
     $line = $lines | Where-Object { $_ -like 'CARGOTOOLS_PROBE *' } | Select-Object -Last 1
@@ -155,9 +161,9 @@ foreach ($run in $runs) {
     $failure = Get-SessionFailure $result
     if (-not $failure) {
         $chosen = [IO.Path]::GetFullPath($result.base).TrimEnd('\', '/')
-        if (-not $selected.ContainsKey($run.Host)) { $selected[$run.Host] = $chosen }
-        elseif (-not [string]::Equals($selected[$run.Host], $chosen, [StringComparison]::OrdinalIgnoreCase)) {
-            $failure = "selects $chosen, but another session on this host selects $($selected[$run.Host])"
+        if (-not $selected.ContainsKey($result.machine)) { $selected[$result.machine] = $chosen }
+        elseif (-not [string]::Equals($selected[$result.machine], $chosen, [StringComparison]::OrdinalIgnoreCase)) {
+            $failure = "selects $chosen, but another session on this host selects $($selected[$result.machine])"
         }
     }
     if ($failure) {

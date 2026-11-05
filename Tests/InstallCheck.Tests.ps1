@@ -133,6 +133,19 @@ Describe 'Test-CargoToolsInstall' {
         $text | Should -Match '\[FAIL\] local Desktop: selects .*Desktop.CargoTools, but another session on this host selects .*Core.CargoTools'
     }
 
+    It 'accepts a checkout installed in a version folder of a per-user module folder' {
+        # Review of #25 (codex, round 3): a base of <root>\CargoTools\<version> was taken for a second copy at
+        # <root>\CargoTools.
+        $root = New-Root
+        $version = (Import-PowerShellDataFile (Join-Path $script:RepoRoot 'CargoTools.psd1')).ModuleVersion
+        $module = Join-Path $root "CargoTools/$version"
+        git clone --quiet --no-hardlinks $script:RepoRoot $module 2>&1 | Out-Null
+        git -C $module update-ref refs/remotes/origin/main HEAD
+        $result = Invoke-InstallCheck @($root) -UserRoot $root
+        $result.Code | Should -Be 0 -Because $result.Text
+        $result.Text | Should -Match "\[PASS\] local NoProfile: CargoTools $([regex]::Escape($version)) from "
+    }
+
     It 'passes the same clean checkout in Windows PowerShell 5.1' {
         $result = Invoke-InstallCheck @((New-GitInstall).Root) -Session Desktop
         $result.Code | Should -Be 0 -Because $result.Text
