@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+- **New: `tools/Test-CargoToolsInstall.ps1` checks a host's install.** In fresh `pwsh -NoProfile` and
+  profile sessions (and over ssh with `-SshTarget`) it requires exactly one CargoTools on
+  PSModulePath, a git checkout with no tracked changes at `origin/main`, an import of that copy at
+  its manifest version and, with `-BuildEnvironment`, a working `Test-BuildEnvironment -Detailed`.
+  It exits 1 on any failure. Why: dtm-p1gen7 loaded a hand-copied, locally patched 0.9.0 long after
+  main reached 0.9.2, and nothing reported it. `Tests/InstallCheck.Tests.ps1` proves each failure
+  is reported and that a clean checkout passes.
+
 ## 0.9.2
 - **Fix: `cargo --version` now reaches cargo.** `--version` was claimed as a wrapper flag, so
   `cargo --version` printed the wrapper banner while `cargo -V` printed cargo's version. It is the

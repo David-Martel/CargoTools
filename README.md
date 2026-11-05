@@ -49,6 +49,15 @@ PS C:\> git clone <repo-url> "$HOME\Documents\PowerShell\Modules\CargoTools"
 PS C:\> Import-Module CargoTools -Force
 ```
 
+Update it with `git pull --ff-only`, never by copying files over it. To confirm that every session on the host
+loads that one checkout at `origin/main` (and no stale copy shadows it), run the install check. It exits 1 on any
+failure and compiles nothing:
+
+```powershell
+PS C:\> .\tools\Test-CargoToolsInstall.ps1 -BuildEnvironment            # pwsh -NoProfile and profile sessions
+PS C:\> .\tools\Test-CargoToolsInstall.ps1 -SshTarget localhost          # also the same sessions over ssh
+```
+
 ### Deploy CLI shims
 
 The `cargo`, `rust-analyzer`, `maturin`, etc. wrappers in `~/bin` and `~/.local/bin` are not installed by `Install-Module`. Run the deployment script after the module is loaded:
