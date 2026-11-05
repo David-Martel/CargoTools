@@ -7,7 +7,9 @@
   or `<Documents>\WindowsPowerShell`, where a OneDrive-synced clone from another host would land), a
   git checkout with no tracked changes at a freshly fetched `origin/main` (a failed fetch fails), an
   import of that copy at its manifest version and, with `-BuildEnvironment`, a working
-  `Test-BuildEnvironment -Detailed`. It exits 1 on any failure. Why: dtm-p1gen7 loaded a hand-copied, locally patched 0.9.0 long after
+  `Test-BuildEnvironment -Detailed`. It exits 1 on any failure. Paths are compared after following junctions and
+  symbolic links, so a junction to the checkout (dtm-work's route for Windows PowerShell 5.1) is not
+  a second copy. Why: dtm-p1gen7 loaded a hand-copied, locally patched 0.9.0 long after
   main reached 0.9.2, and nothing reported it. `Tests/InstallCheck.Tests.ps1` proves each failure
   is reported and that a clean checkout passes.
 

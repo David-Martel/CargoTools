@@ -8,7 +8,8 @@ on, and nothing reported it. This script starts fresh sessions (pwsh -NoProfile,
 PowerShell 5.1, and the same over ssh with -SshTarget) and in each one checks that:
 
   1. exactly one CargoTools module base is on PSModulePath (a second copy can shadow the first), and every session on
-     a host selects the same one (a profile or edition-specific path must not pick a different clone);
+     a host selects the same one (a profile or edition-specific path must not pick a different clone). Paths are
+     compared after following junctions and symbolic links, so a link to the checkout is that checkout;
   2. no other CargoTools sits in a per-user module folder (<Documents>\PowerShell\Modules or
      <Documents>\WindowsPowerShell\Modules). PowerShell adds those folders to PSModulePath on its own, and when
      Documents is OneDrive-synced another host's clone can arrive there: dtm-work keeps its clone in a Documents
@@ -74,15 +75,33 @@ if ($a.override) { $env:PSModulePath = $a.override.Replace('{edition}', [string]
 $r = [ordered]@{ machine = [Environment]::MachineName; bases = @(); strays = @(); gitTop = $null; dirty = $null
     statusFailed = $false; fetchFailed = $false; head = $null; remote = $null; manifestVersion = $null; version = $null
     base = $null; buildEnvironment = $null; error = $null }
+function Resolve-PhysicalPath([string]$Path) {
+    # Follows junctions and symbolic links in every path component, so a link to the checkout counts as the checkout,
+    # not as a second copy (dtm-work gives Windows PowerShell 5.1 the OneDrive clone through a junction).
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+    $root = [IO.Path]::GetPathRoot($full)
+    $current = $root.TrimEnd('\', '/')
+    foreach ($part in $full.Substring($root.Length).Split([char[]]@('\', '/'), [StringSplitOptions]::RemoveEmptyEntries)) {
+        $current = Join-Path ($current + '\') $part
+        $item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.LinkType -eq 'Junction' -or $item.LinkType -eq 'SymbolicLink') -and $item.Target) {
+            $target = (@($item.Target)[0]) -replace '^\\\\\?\\', ''
+            if (-not [IO.Path]::IsPathRooted($target)) { $target = Join-Path (Split-Path -Parent $current) $target }
+            $current = [IO.Path]::GetFullPath($target).TrimEnd('\', '/')
+        }
+    }
+    return $current
+}
 try {
-    $r.bases = @(Get-Module -ListAvailable CargoTools | ForEach-Object { $_.ModuleBase } | Select-Object -Unique)
+    # One entry per physical directory: a junction to the same checkout is not a second copy.
+    $r.bases = @(Get-Module -ListAvailable CargoTools | ForEach-Object { Resolve-PhysicalPath $_.ModuleBase } | Select-Object -Unique)
     $docs = [Environment]::GetFolderPath('MyDocuments')
     $userRoots = if ($a.userRoots) { @($a.userRoots) } else { @((Join-Path $docs 'PowerShell\Modules'), (Join-Path $docs 'WindowsPowerShell\Modules')) }
-    $known = @($r.bases | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\', '/') })
+    $known = @($r.bases)
     $r.strays = @(foreach ($root in $userRoots) {
         $candidate = Join-Path $root 'CargoTools'
         if (-not (Test-Path -LiteralPath $candidate)) { continue }
-        $container = [IO.Path]::GetFullPath($candidate).TrimEnd('\', '/')
+        $container = Resolve-PhysicalPath $candidate
         # A versioned install (CargoTools\0.9.2) reports the version folder as its base, inside this container.
         $isKnown = @($known | Where-Object { $_ -eq $container -or $_.StartsWith($container + '\', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
         if (-not $isKnown) { $candidate }
@@ -106,7 +125,7 @@ try {
         Import-Module CargoTools -Force -ErrorAction Stop
         $m = Get-Module CargoTools
         $r.version = [string]$m.Version
-        $r.base = $m.ModuleBase
+        $r.base = Resolve-PhysicalPath $m.ModuleBase
         if ($a.buildEnvironment) { Test-BuildEnvironment -Detailed *>&1 | Out-Null; $r.buildEnvironment = 'ran' }
     }
 } catch { $r.error = $_.Exception.Message }
