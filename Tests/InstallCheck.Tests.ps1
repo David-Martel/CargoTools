@@ -108,6 +108,31 @@ Describe 'Test-CargoToolsInstall' {
         $result.Text | Should -Match 'per-user module folder'
     }
 
+    It 'fails when git status cannot read the checkout' {
+        # Review of #25 (codex, round 2): a failing `git status` prints nothing, which read as "clean".
+        $install = New-GitInstall
+        [IO.File]::WriteAllText((Join-Path $install.Module '.git/index'), 'not an index')
+        $result = Invoke-InstallCheck @($install.Root)
+        $result.Code | Should -Be 1 -Because $result.Text
+        $result.Text | Should -Match 'git status failed'
+    }
+
+    It 'fails when two sessions on the host select different clean checkouts' {
+        # Review of #25 (codex, round 2): each session was judged alone, so pwsh and 5.1 could load different clones.
+        $root = New-Root
+        foreach ($edition in 'Core', 'Desktop') {
+            $module = Join-Path $root "$edition/CargoTools"
+            git clone --quiet --no-hardlinks $script:RepoRoot $module 2>&1 | Out-Null
+            git -C $module update-ref refs/remotes/origin/main HEAD
+        }
+        $userRoot = New-Root
+        $command = "& '$script:Check' -Session NoProfile,Desktop -NoFetch -PSModulePathOverride '$(Join-Path $root '{edition}')' -UserModuleRootOverride '$userRoot'; exit `$LASTEXITCODE"
+        $text = & $script:Pwsh -NoLogo -NoProfile -Command $command 2>&1 | Out-String
+        $LASTEXITCODE | Should -Be 1 -Because $text
+        $text | Should -Match '\[PASS\] local NoProfile: '
+        $text | Should -Match '\[FAIL\] local Desktop: selects .*Desktop.CargoTools, but another session on this host selects .*Core.CargoTools'
+    }
+
     It 'passes the same clean checkout in Windows PowerShell 5.1' {
         $result = Invoke-InstallCheck @((New-GitInstall).Root) -Session Desktop
         $result.Code | Should -Be 0 -Because $result.Text

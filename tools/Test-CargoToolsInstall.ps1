@@ -7,7 +7,8 @@ A copied, unversioned CargoTools drifts silently: dtm-p1gen7 ran a hand-patched 
 on, and nothing reported it. This script starts fresh sessions (pwsh -NoProfile, pwsh with the profile and Windows
 PowerShell 5.1, and the same over ssh with -SshTarget) and in each one checks that:
 
-  1. exactly one CargoTools module base is on PSModulePath (a second copy can shadow the first);
+  1. exactly one CargoTools module base is on PSModulePath (a second copy can shadow the first), and every session on
+     a host selects the same one (a profile or edition-specific path must not pick a different clone);
   2. no other CargoTools sits in a per-user module folder (<Documents>\PowerShell\Modules or
      <Documents>\WindowsPowerShell\Modules). PowerShell adds those folders to PSModulePath on its own, and when
      Documents is OneDrive-synced another host's clone can arrive there: dtm-work keeps its clone in a Documents
@@ -40,7 +41,8 @@ Also run Test-BuildEnvironment -Detailed in each session.
 
 .PARAMETER PSModulePathOverride
 Replace PSModulePath inside each probe session before the checks. Tests use it to point the check at fixture
-directories; a real check leaves it unset.
+directories; a real check leaves it unset. The token {edition} becomes the session's PSEdition (Core or Desktop), so
+a test can give the two editions different paths.
 
 .PARAMETER UserModuleRootOverride
 Replace the per-user module folders that check 2 scans. Tests use it; a real check leaves it unset.
@@ -68,8 +70,8 @@ $probe = @'
 param([string]$ArgsJson)
 $ErrorActionPreference = 'Continue'
 $a = $ArgsJson | ConvertFrom-Json
-if ($a.override) { $env:PSModulePath = $a.override }
-$r = [ordered]@{ bases = @(); strays = @(); gitTop = $null; dirty = $null; fetchFailed = $false; head = $null
+if ($a.override) { $env:PSModulePath = $a.override.Replace('{edition}', [string]$PSVersionTable.PSEdition) }
+$r = [ordered]@{ bases = @(); strays = @(); gitTop = $null; dirty = $null; statusFailed = $false; fetchFailed = $false; head = $null
     remote = $null; manifestVersion = $null; version = $null; base = $null; buildEnvironment = $null; error = $null }
 try {
     $r.bases = @(Get-Module -ListAvailable CargoTools | ForEach-Object { $_.ModuleBase } | Select-Object -Unique)
@@ -86,7 +88,9 @@ try {
         $top = git -C $base rev-parse --show-toplevel 2>$null
         if ($LASTEXITCODE -eq 0 -and $top) {
             $r.gitTop = [IO.Path]::GetFullPath($top)
-            $r.dirty = [bool](git -C $base status --porcelain --untracked-files=no)
+            $status = git -C $base status --porcelain --untracked-files=no 2>$null
+            $r.statusFailed = $LASTEXITCODE -ne 0
+            $r.dirty = [bool]$status
             if ($a.fetch) {
                 git -C $base fetch --quiet origin $a.branch 2>$null | Out-Null
                 $r.fetchFailed = $LASTEXITCODE -ne 0
@@ -119,6 +123,7 @@ function Get-SessionFailure([object]$r) {
     if (@($r.strays).Count) { return "CargoTools copy in a per-user module folder that PowerShell can add to PSModulePath ($(@($r.strays) -join '; ')); with a OneDrive-synced Documents it may be another host's clone" }
     $base = [IO.Path]::GetFullPath($r.bases[0]).TrimEnd('\', '/')
     if (-not $r.gitTop -or -not [string]::Equals($r.gitTop.TrimEnd('\', '/'), $base, [StringComparison]::OrdinalIgnoreCase)) { return "$base is not a git checkout" }
+    if ($r.statusFailed) { return "git status failed in $base, so its tracked files could not be checked" }
     if ($r.dirty) { return "$base has uncommitted changes to tracked files" }
     if ($r.fetchFailed) { return "git fetch origin $Branch failed in $base, so the cached origin/$Branch cannot show whether HEAD is current" }
     if (-not $r.remote) { return "$base has no origin/$Branch ref" }
@@ -134,19 +139,27 @@ $runs = foreach ($s in $Session) {
     $exe = if ($s -eq 'Desktop') { 'powershell' } else { 'pwsh' }
     $local = if ($s -eq 'Desktop') { (Get-Command powershell -CommandType Application | Select-Object -First 1).Source } else { $pwsh }
     $flags = @('-NoLogo') + $(if ($s -ne 'Profile') { @('-NoProfile') } else { @() }) + @('-EncodedCommand', $encoded)
-    @{ Name = "local $s"; Output = { & $local @flags 2>&1 }.GetNewClosure() }
+    @{ Name = "local $s"; Host = 'local'; Output = { & $local @flags 2>&1 }.GetNewClosure() }
     if ($SshTarget) {
         $remote = "$exe $($flags -join ' ')"
-        @{ Name = "ssh $SshTarget $s"; Output = { & ssh -o BatchMode=yes -o ConnectTimeout=15 $SshTarget $remote 2>&1 }.GetNewClosure() }
+        @{ Name = "ssh $SshTarget $s"; Host = "ssh $SshTarget"; Output = { & ssh -o BatchMode=yes -o ConnectTimeout=15 $SshTarget $remote 2>&1 }.GetNewClosure() }
     }
 }
 
 $failed = 0
+$selected = @{}   # host -> the base its first passing session loaded
 foreach ($run in $runs) {
     $lines = @(& $run.Output | ForEach-Object { [string]$_ })
     $line = $lines | Where-Object { $_ -like 'CARGOTOOLS_PROBE *' } | Select-Object -Last 1
     $result = if ($line) { $line.Substring('CARGOTOOLS_PROBE '.Length) | ConvertFrom-Json } else { $null }
     $failure = Get-SessionFailure $result
+    if (-not $failure) {
+        $chosen = [IO.Path]::GetFullPath($result.base).TrimEnd('\', '/')
+        if (-not $selected.ContainsKey($run.Host)) { $selected[$run.Host] = $chosen }
+        elseif (-not [string]::Equals($selected[$run.Host], $chosen, [StringComparison]::OrdinalIgnoreCase)) {
+            $failure = "selects $chosen, but another session on this host selects $($selected[$run.Host])"
+        }
+    }
     if ($failure) {
         $failed++
         Write-Output "[FAIL] $($run.Name): $failure"
