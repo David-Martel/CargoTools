@@ -146,6 +146,39 @@ Describe 'Test-CargoToolsInstall' {
         $result.Text | Should -Match "\[PASS\] local NoProfile: CargoTools $([regex]::Escape($version)) from "
     }
 
+    It 'counts a junction to the checkout as that checkout, in pwsh and Windows PowerShell 5.1' {
+        # dtm-work gives 5.1 its OneDrive clone through a junction on a 5.1-only module path. pwsh then lists the clone
+        # twice (real path and junction); both are one physical copy, and both editions select it.
+        $install = New-GitInstall
+        $linkRoot = New-Root
+        [void](New-Item -ItemType Junction -Path (Join-Path $linkRoot 'CargoTools') -Target $install.Module)
+        $both = Invoke-InstallCheck @($install.Root, $linkRoot)
+        $both.Code | Should -Be 0 -Because $both.Text
+        $desktop = Invoke-InstallCheck @($linkRoot) -Session Desktop
+        $desktop.Code | Should -Be 0 -Because $desktop.Text
+        $desktop.Text | Should -Match ([regex]::Escape("from $($install.Module)"))
+    }
+
+    It 'resolves a junction whose target passes through another junction' {
+        # Review of #28 (codex): only the first hop was followed, so alias -> redirect\CargoTools -> real stayed two copies.
+        $install = New-GitInstall
+        $redirect = Join-Path (New-Root) 'redirect'
+        [void](New-Item -ItemType Junction -Path $redirect -Target $install.Root)
+        $aliasRoot = New-Root
+        [void](New-Item -ItemType Junction -Path (Join-Path $aliasRoot 'CargoTools') -Target (Join-Path $redirect 'CargoTools'))
+        $result = Invoke-InstallCheck @($install.Root, $aliasRoot)
+        $result.Code | Should -Be 0 -Because $result.Text
+    }
+
+    It 'still fails a real second copy next to a junction (control for the case above)' {
+        $install = New-GitInstall
+        $linkRoot = New-Root
+        [void](New-Item -ItemType Junction -Path (Join-Path $linkRoot 'CargoTools') -Target $install.Module)
+        $result = Invoke-InstallCheck @($install.Root, $linkRoot, (New-CopyInstall).Root)
+        $result.Code | Should -Be 1 -Because $result.Text
+        $result.Text | Should -Match '2 CargoTools copies on PSModulePath'
+    }
+
     It 'passes the same clean checkout in Windows PowerShell 5.1' {
         $result = Invoke-InstallCheck @((New-GitInstall).Root) -Session Desktop
         $result.Code | Should -Be 0 -Because $result.Text
