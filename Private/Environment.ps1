@@ -1242,12 +1242,10 @@ function Initialize-CargoEnv {
     if (-not $env:SCCACHE_STARTUP_TIMEOUT) { $env:SCCACHE_STARTUP_TIMEOUT = '30' }
     if (-not $env:SCCACHE_REQUEST_TIMEOUT) { $env:SCCACHE_REQUEST_TIMEOUT = '180' }
     if (-not $env:SCCACHE_DIRECT) { $env:SCCACHE_DIRECT = 'true' }
-    if (-not $env:SCCACHE_SERVER_PORT) { $env:SCCACHE_SERVER_PORT = '4293' }
-    # Self-heal: a stale/inherited port (e.g. 14400) may now sit inside a Windows excluded range and
-    # silently break `sccache --start-server` (os error 10013). Validate + fall back to a free port.
-    if (-not $sccacheDisabled) {
-        $env:SCCACHE_SERVER_PORT = Resolve-FreeSccachePort -DesiredPort $env:SCCACHE_SERVER_PORT -CacheRoot $CacheRoot
-    }
+    # The default port is validated and converged on the shared server (a stale/inherited default may sit in
+    # a Windows excluded range and break `sccache --start-server` with os error 10013). An explicit
+    # SCCACHE_SERVER_PORT is the caller's choice and is kept; see Set-SccacheServerPortEnv.
+    Set-SccacheServerPortEnv -DefaultPort '4293' -CacheRoot $CacheRoot -SkipValidation:$sccacheDisabled
     if (-not $env:SCCACHE_LOG) { $env:SCCACHE_LOG = 'warn' }
     if (-not $env:SCCACHE_ERROR_LOG) { $env:SCCACHE_ERROR_LOG = (Join-Path $CacheRoot 'sccache\error.log') }
     if (-not $env:SCCACHE_NO_DAEMON) { $env:SCCACHE_NO_DAEMON = '0' }

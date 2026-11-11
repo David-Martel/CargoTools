@@ -16,6 +16,14 @@
   shell and as `sccache` in another made a second, disjoint cache (0 of 57 hits on an identical repeat).
   `Initialize-CargoEnv` now rewrites a full-path sccache value to `sccache` when sccache is in use; a
   different wrapper is left alone. Covered in `Tests/SccacheCacheKey.Tests.ps1`.
+- **Fix: an explicit `SCCACHE_SERVER_PORT` is kept.** `Initialize-CargoEnv` ran every port through
+  `Resolve-FreeSccachePort` with the machine cache root, so a private port with no server on it yet was
+  replaced by the port in `resolved-port.txt`, and a free private port was written into that file. A
+  session that meant to use a private sccache server was silently on the machine-wide one, and a later
+  `sccache --stop-server` stopped it (port 4810). `Set-SccacheServerPortEnv` now checks an explicit port
+  without any shared state, keeps it, and warns if it is not usable (the build then runs without
+  sccache). An unset port, and a port CargoTools chose on an earlier call, still converge on the shared
+  server. Both `Environment.ps1` and `Environment-dtm-p1gen7.ps1` use it.
 - **New: `tools/Test-CargoToolsInstall.ps1` checks a host's install.** In fresh `pwsh -NoProfile`,
   `pwsh` and Windows PowerShell 5.1 sessions (and over ssh with `-SshTarget`) it requires exactly
   one CargoTools on PSModulePath, no other copy in a per-user module folder (`<Documents>\PowerShell`

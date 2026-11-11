@@ -243,3 +243,87 @@ Describe 'Initialize-CargoEnv wrapper spelling' {
         $env:CARGO_BUILD_RUSTC_WRAPPER | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Initialize-CargoEnv SCCACHE_SERVER_PORT' {
+    BeforeEach {
+        $script:SavedForPort = @{}
+        Get-ChildItem Env: | ForEach-Object { $script:SavedForPort[$_.Name] = $_.Value }
+        $env:CARGOTOOLS_DISABLE_GLOBAL_RUSTFMT_SYNC = '1'
+        $env:CARGO_HOME = Join-Path $TestDrive 'cargo'
+        $env:RUSTUP_HOME = Join-Path $TestDrive 'rustup'
+        Remove-Item Env:SCCACHE_DISABLE, Env:SCCACHE_SERVER_PORT -ErrorAction SilentlyContinue
+        & $script:CargoModule { $script:CargoToolsAssignedSccachePort = $null }
+        # Port state is a scratch file; no real sccache server or port is contacted.
+        $script:StateDir = Join-Path $TestDrive "sccache-$([guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path (Join-Path $script:StateDir 'sccache') -Force | Out-Null
+        $script:StateFile = Join-Path $script:StateDir 'sccache\resolved-port.txt'
+        Mock Ensure-MsvcEnv -ModuleName CargoTools {}
+        Mock Ensure-Directory -ModuleName CargoTools {}
+        Mock Resolve-Sccache -ModuleName CargoTools { 'sccache-fixture.exe' }
+        # Mock bodies run in the module's scope, so they get the directory by closure, not from $script:.
+        $stateDirForMocks = $script:StateDir
+        Mock Resolve-CacheRoot -ModuleName CargoTools { $stateDirForMocks }.GetNewClosure()
+        Mock Get-MachineConfig -ModuleName CargoTools { @{ CacheRoot = $stateDirForMocks } }.GetNewClosure()
+        Mock netsh -ModuleName CargoTools { '60000 60010' }
+        Mock Test-SccacheEndpointListening -ModuleName CargoTools { $false }
+        Mock Test-SccacheHealth -ModuleName CargoTools { [pscustomobject]@{ Healthy = $false } }
+        Mock Test-SccachePortAvailable -ModuleName CargoTools { $true }
+    }
+    AfterEach {
+        foreach ($item in @(Get-ChildItem Env:)) {
+            if (-not $script:SavedForPort.ContainsKey($item.Name)) { [Environment]::SetEnvironmentVariable($item.Name, $null) }
+        }
+        foreach ($item in $script:SavedForPort.GetEnumerator()) { [Environment]::SetEnvironmentVariable($item.Key, $item.Value) }
+    }
+
+    It 'keeps an explicit port when the shared state names another usable port' {
+        # Protects: a private sccache server stays private. Detects: resolved-port.txt re-pointing the
+        # session at the machine-wide server (4810), after which `sccache --stop-server` stopped it.
+        Set-Content -LiteralPath $script:StateFile -Value '4810' -NoNewline
+        $env:SCCACHE_SERVER_PORT = '4899'
+        Initialize-CargoEnv -CacheRoot $script:StateDir
+        $env:SCCACHE_SERVER_PORT | Should -Be '4899'
+    }
+
+    It 'does not overwrite the shared port state with an explicit private port' {
+        # Detects: the explicit port being persisted, which steered every later default session at it.
+        Set-Content -LiteralPath $script:StateFile -Value '4810' -NoNewline
+        $env:SCCACHE_SERVER_PORT = '4899'
+        Initialize-CargoEnv -CacheRoot $script:StateDir
+        (Get-Content -LiteralPath $script:StateFile -Raw).Trim() | Should -Be '4810'
+    }
+
+    It 'does not create port state for an explicit port that answers as a healthy server' {
+        Mock Test-SccacheEndpointListening -ModuleName CargoTools { $true }
+        Mock Test-SccacheHealth -ModuleName CargoTools { [pscustomobject]@{ Healthy = $true } }
+        $env:SCCACHE_SERVER_PORT = '4899'
+        Initialize-CargoEnv -CacheRoot $script:StateDir
+        $env:SCCACHE_SERVER_PORT | Should -Be '4899'
+        Test-Path -LiteralPath $script:StateFile | Should -BeFalse
+    }
+
+    It 'keeps an explicit port that is not usable and warns what would have been chosen' {
+        Mock Test-SccachePortAvailable -ModuleName CargoTools { param($Port) $Port -ne 4899 }
+        $env:SCCACHE_SERVER_PORT = '4899'
+        Mock Write-Warning -ModuleName CargoTools {}
+        Initialize-CargoEnv -CacheRoot $script:StateDir
+        $env:SCCACHE_SERVER_PORT | Should -Be '4899'
+        Should -Invoke Write-Warning -ModuleName CargoTools -Times 1 -Exactly -ParameterFilter { $Message -like 'SCCACHE_SERVER_PORT=4899 is set explicitly*' }
+    }
+
+    It 'still converges an unset port on the shared state' {
+        # The default keeps its old behaviour: sessions without a choice share one server.
+        Set-Content -LiteralPath $script:StateFile -Value '4810' -NoNewline
+        Initialize-CargoEnv -CacheRoot $script:StateDir
+        $env:SCCACHE_SERVER_PORT | Should -Be '4810'
+    }
+
+    It 'keeps re-resolving a port CargoTools chose itself on later calls' {
+        # Detects: treating the value written by the first call as the caller's explicit choice.
+        Set-Content -LiteralPath $script:StateFile -Value '4810' -NoNewline
+        Initialize-CargoEnv -CacheRoot $script:StateDir
+        Set-Content -LiteralPath $script:StateFile -Value '4811' -NoNewline
+        Initialize-CargoEnv -CacheRoot $script:StateDir
+        $env:SCCACHE_SERVER_PORT | Should -Be '4811'
+    }
+}
