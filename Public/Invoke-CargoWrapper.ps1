@@ -800,8 +800,17 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                                 }
                                 continue
                             }
+                            '--target-dir' {
+                                if ($idx + 1 -lt $buildArgsRaw.Count) {
+                                    $scopeArgs.Add('--target-dir')
+                                    $idx++
+                                    $scopeArgs.Add($buildArgsRaw[$idx])
+                                }
+                                continue
+                            }
                             default {
-                                if ($arg.StartsWith('--package=') -or
+                                if ($arg.StartsWith('--target-dir=') -or
+                                    $arg.StartsWith('--package=') -or
                                     $arg.StartsWith('--features=') -or
                                     $arg.StartsWith('--manifest-path=')) {
                                     $scopeArgs.Add($arg)

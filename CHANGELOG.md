@@ -24,6 +24,13 @@
   without any shared state, keeps it, and warns if it is not usable (the build then runs without
   sccache). An unset port, and a port CargoTools chose on an earlier call, still converge on the shared
   server. Both `Environment.ps1` and `Environment-dtm-p1gen7.ps1` use it.
+- **Fix: an explicit `--target-dir` is respected by AutoCopy and by the post-build nextest run.**
+  `Copy-BuildOutputToLocal` copied the shared target into `.\target\<profile>` even when the caller had
+  built into its own `--target-dir`, and an instrumented `sort.exe` overwrote the shared copy that way. It
+  now returns without copying when the arguments carry `--target-dir` (either spelling). The nextest run
+  that follows a build rebuilt its arguments from a fixed list of scope flags and dropped
+  `--target-dir`, so it compiled the tests into the default target; the flag is now forwarded. Covered
+  in `Tests/BuildOutput.Tests.ps1` and the wrapper contract tests.
 - **New: `tools/Test-CargoToolsInstall.ps1` checks a host's install.** In fresh `pwsh -NoProfile`,
   `pwsh` and Windows PowerShell 5.1 sessions (and over ssh with `-SshTarget`) it requires exactly
   one CargoTools on PSModulePath, no other copy in a per-user module folder (`<Documents>\PowerShell`

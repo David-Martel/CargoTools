@@ -328,6 +328,7 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
 
     It 'runs the post-build nextest in the same target directory as the build' -ForEach @(
         @{ Label = 'from CARGO_TARGET_DIR'; ExplicitFlag = $false }
+        @{ Label = 'from an explicit --target-dir'; ExplicitFlag = $true }
     ) {
         # Protects: the post-build test run compiles the tests of the code just built, in that build's target.
         # Detects: nextest silently building into the default target (an instrumented sort.exe overwrote

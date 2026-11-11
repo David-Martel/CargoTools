@@ -70,6 +70,19 @@ function Get-LocalCargoTargetRoot {
     return Join-Path $resolvedRoot 'target'
 }
 
+function Get-ExplicitTargetDir {
+    # The directory the caller asked for with --target-dir, or $null. cargo puts its output there and
+    # nowhere else, so neither AutoCopy nor the post-build nextest run may touch another target dir.
+    param([string[]]$ArgsList)
+
+    if (-not $ArgsList) { return $null }
+    for ($i = 0; $i -lt $ArgsList.Count; $i++) {
+        if ($ArgsList[$i] -eq '--target-dir' -and $i + 1 -lt $ArgsList.Count) { return $ArgsList[$i + 1] }
+        if ($ArgsList[$i] -like '--target-dir=*') { return $ArgsList[$i].Substring('--target-dir='.Length) }
+    }
+    return $null
+}
+
 function Resolve-CargoOutputDirectory {
     [CmdletBinding()]
     param(
@@ -257,6 +270,10 @@ function Copy-BuildOutputToLocal {
 
         [switch]$Quiet
     )
+
+    # An explicit --target-dir means the build did not go to the shared target, so there is nothing to
+    # copy, and copying anyway hardlinks the shared copy over .\target\<profile> (and back).
+    if (Get-ExplicitTargetDir $ArgsList) { return $false }
 
     if (-not $SharedTarget) { $SharedTarget = Join-Path (Resolve-CacheRoot) 'cargo-target' }
 
