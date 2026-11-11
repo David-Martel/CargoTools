@@ -566,7 +566,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                     [string[]]$fixArgs = @(Get-ClippyFixArgs $passThrough.ToArray())
                     Write-CargoDebug ("Clippy auto-fix arguments: " + (Convert-ArgsToShell $fixArgs))
                     Write-CargoStatus -Phase "Preflight" -Message "Requested auto-fix (clippy --fix + fmt)..." -Type "Info"
-                    & $rustupPath run $toolchain cargo clippy --fix --allow-dirty --allow-staged --allow-no-vcs @fixArgs
+                    Invoke-RustupCargo -RustupPath $rustupPath -Toolchain $toolchain -CargoArgs (@('clippy', '--fix', '--allow-dirty', '--allow-staged', '--allow-no-vcs') + $fixArgs)
                     $autoFixExitCode = $LASTEXITCODE
                     if ($autoFixExitCode -ne 0) {
                         Write-CargoStatus -Phase "Preflight" -Message "Auto-fix failed." -Type "Error"
@@ -709,7 +709,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
 
                 Write-CargoStatus -Phase 'Build' -Message "Running: cargo $($buildArgs -join ' ')" -Type 'Info' -MinVerbosity 2
 
-                & $rustupPath run $toolchain cargo @buildArgs
+                Invoke-RustupCargo -RustupPath $rustupPath -Toolchain $toolchain -CargoArgs $buildArgs
                 $cargoExitCode = $LASTEXITCODE
                 $buildElapsed = (Get-Date) - $buildStartTime
 
@@ -828,7 +828,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                         $nextestArgs += @('--profile', $profile)
                     }
                     Write-CargoStatus -Phase 'PostBuild' -Message "Running: cargo $($nextestArgs -join ' ')" -Type 'Info'
-                    & $rustupPath run $toolchain cargo @nextestArgs
+                    Invoke-RustupCargo -RustupPath $rustupPath -Toolchain $toolchain -CargoArgs $nextestArgs
                     $nextestExitCode = $LASTEXITCODE
                     if ($nextestExitCode -ne 0) {
                         Write-CargoBuildPhase -Phase 'PostBuild' -Failed
@@ -850,7 +850,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                             $docArgs += @('--profile', $profile)
                         }
                         Write-CargoStatus -Phase 'PostBuild' -Message "Running: cargo $($docArgs -join ' ')" -Type 'Info'
-                        & $rustupPath run $toolchain cargo @docArgs
+                        Invoke-RustupCargo -RustupPath $rustupPath -Toolchain $toolchain -CargoArgs $docArgs
                         $doctestExitCode = $LASTEXITCODE
                         if ($doctestExitCode -ne 0) {
                             Write-CargoBuildPhase -Phase 'PostBuild' -Failed

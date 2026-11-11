@@ -175,7 +175,7 @@ function Invoke-PreflightLocal {
     switch ($State.Mode) {
         'check' {
             $preArgs = Ensure-MessageFormatShort $preArgs
-            & $RustupPath run $Toolchain cargo @preArgs |
+            Invoke-RustupCargo -RustupPath $RustupPath -Toolchain $Toolchain -CargoArgs $preArgs |
                 ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
             if ($LASTEXITCODE -ne 0) {
                 if ($State.Blocking) { return $LASTEXITCODE }
@@ -185,7 +185,7 @@ function Invoke-PreflightLocal {
         'clippy' {
             $preArgs = Ensure-MessageFormatShort $preArgs
             if ($State.Strict) { $preArgs += @('--', '-D', 'warnings') }
-            & $RustupPath run $Toolchain cargo @preArgs |
+            Invoke-RustupCargo -RustupPath $RustupPath -Toolchain $Toolchain -CargoArgs $preArgs |
                 ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
             if ($LASTEXITCODE -ne 0) {
                 if ($State.Blocking) { return $LASTEXITCODE }
@@ -222,7 +222,7 @@ function Invoke-PreflightLocal {
                 }
             }
             $checkArgs = Ensure-MessageFormatShort $checkArgs
-            & $RustupPath run $Toolchain cargo @checkArgs |
+            Invoke-RustupCargo -RustupPath $RustupPath -Toolchain $Toolchain -CargoArgs $checkArgs |
                 ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
             if ($LASTEXITCODE -ne 0) {
                 if ($State.Blocking) { return $LASTEXITCODE }
@@ -239,7 +239,7 @@ function Invoke-PreflightLocal {
             }
             $clippyArgs = Ensure-MessageFormatShort $clippyArgs
             if ($State.Strict) { $clippyArgs += @('--', '-D', 'warnings') }
-            & $RustupPath run $Toolchain cargo @clippyArgs |
+            Invoke-RustupCargo -RustupPath $RustupPath -Toolchain $Toolchain -CargoArgs $clippyArgs |
                 ForEach-Object { if ($null -ne $OutputBuffer) { [void]$OutputBuffer.Add($_) } }
             if ($LASTEXITCODE -ne 0) {
                 if ($State.Blocking) { return $LASTEXITCODE }

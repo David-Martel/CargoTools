@@ -181,6 +181,84 @@ function Add-RustFlags {
     }
 }
 
+# Variables this module defines and reads itself. They are not cargo settings.
+$script:CargoToolsPrivateEnvPattern = '^CARGO_(USE_[A-Z]+|PREFLIGHT[A-Z_]*|RA_PREFLIGHT|ROUTE_[A-Z]+|WSL_[A-Z]+|LLM_[A-Z]+|DOCKER_[A-Z]+|AUTO_COPY(_EXAMPLES)?|QUICK_CHECK|VERBOSITY|PROFILE|RAW|LLD_PATH|TIMINGS|RELEASE_LTO|TOOLCHAIN)$'
+
+function Add-CargoTargetDirArg {
+    <#
+    .SYNOPSIS
+    Moves the target directory from CARGO_TARGET_DIR into a --target-dir argument.
+    .DESCRIPTION
+    sccache hashes every CARGO_* variable that rustc inherits, so an exported CARGO_TARGET_DIR makes
+    each distinct directory a separate cache (a build in a second directory missed 57 of 57 units).
+    A command-line flag is not in rustc's environment. This only builds the argument list;
+    Invoke-RustupCargo removes the variable for the duration of the call.
+    Returns the arguments unchanged when the variable is unset, the subcommand does not take the
+    flag, or the caller already passed one. The flag goes before a bare `--` so it is never handed to
+    a test harness or to `cargo run`.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [AllowNull()][string]$TargetDir = $env:CARGO_TARGET_DIR,
+        [string]$PrimaryCommand,
+        [string[]]$ArgsList
+    )
+
+    $supported = @('build', 'check', 'clippy', 'test', 'doc', 'run', 'bench', 'rustc', 'rustdoc', 'nextest', 'llvm-cov')
+    if ([string]::IsNullOrWhiteSpace($TargetDir) -or $PrimaryCommand -notin $supported) { return $ArgsList }
+    foreach ($a in $ArgsList) {
+        if ($a -eq '--') { break }
+        if ($a -eq '--target-dir' -or $a.StartsWith('--target-dir=')) { return $ArgsList }
+    }
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $inserted = $false
+    foreach ($a in $ArgsList) {
+        if ($a -eq '--' -and -not $inserted) {
+            $out.Add('--target-dir'); $out.Add($TargetDir); $inserted = $true
+        }
+        $out.Add($a)
+    }
+    if (-not $inserted) { $out.Add('--target-dir'); $out.Add($TargetDir) }
+    return $out.ToArray()
+}
+
+function Invoke-RustupCargo {
+    <#
+    .SYNOPSIS
+    Runs `rustup run <toolchain> cargo ...` with the target directory passed as a flag.
+    .DESCRIPTION
+    See Add-CargoTargetDirArg for why. CARGO_TARGET_DIR is restored afterwards because the wrapper's
+    own post-build steps read it. Output and $LASTEXITCODE behave as for a direct call.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RustupPath,
+        [Parameter(Mandatory)][string]$Toolchain,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$CargoArgs
+    )
+
+    $savedTargetDir = $env:CARGO_TARGET_DIR
+    $finalArgs = @(Add-CargoTargetDirArg -TargetDir $savedTargetDir -PrimaryCommand (Get-PrimaryCommand $CargoArgs) -ArgsList $CargoArgs)
+    if ($savedTargetDir -and $finalArgs.Count -ne $CargoArgs.Count) { Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue }
+
+    # CargoTools' own switches (CARGO_USE_LLD, CARGO_PREFLIGHT_*, ...) are read by this module, not by
+    # cargo, but they start with CARGO_ and so end up in every sccache key: a build with one toggled
+    # cannot share a cache with a build without it. Hide them from cargo for the call.
+    $savedToggles = @{}
+    foreach ($entry in @(Get-ChildItem Env: | Where-Object { $_.Name -match $script:CargoToolsPrivateEnvPattern })) {
+        $savedToggles[$entry.Name] = $entry.Value
+        Remove-Item "Env:$($entry.Name)" -ErrorAction SilentlyContinue
+    }
+    try {
+        & $RustupPath run $Toolchain cargo @finalArgs
+    } finally {
+        if ($savedTargetDir) { $env:CARGO_TARGET_DIR = $savedTargetDir }
+        foreach ($name in $savedToggles.Keys) { Set-Item "Env:$name" $savedToggles[$name] }
+    }
+}
+
 function Get-PrimaryCommand {
     param([string[]]$ArgsList)
     $ArgsList = Normalize-ArgsList $ArgsList

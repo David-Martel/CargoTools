@@ -1,6 +1,16 @@
 # Changelog
 
 ## Unreleased
+- **Fix: a second checkout of the same source now hits the first checkout's sccache entries.** sccache
+  hashes every `CARGO_*` variable that rustc inherits. The wrapper exported a per-checkout
+  `CARGO_TARGET_DIR` and left its own switches (`CARGO_USE_LLD`, `CARGO_PREFLIGHT_*`,
+  `CARGO_AUTO_COPY`, ...) in cargo's environment, so each checkout got a private cache. `Invoke-RustupCargo`
+  now passes the target directory with `Add-CargoTargetDirArg` (before a bare `--`, never when the caller
+  already passed `--target-dir`, and only to subcommands that take it) and hides the private switches
+  for the call, restoring both afterwards. Measured on a private sccache server: 0 of 57 units hit on a
+  second checkout before, 51 of 57 after. `Tests/SccacheCacheKey.Tests.ps1` covers the argument
+  rewrite, the hide-and-restore (including when cargo throws) and a guard that fails when the module
+  starts reading a new `CARGO_*` variable the pattern does not cover.
 - **New: `tools/Test-CargoToolsInstall.ps1` checks a host's install.** In fresh `pwsh -NoProfile`,
   `pwsh` and Windows PowerShell 5.1 sessions (and over ssh with `-SshTarget`) it requires exactly
   one CargoTools on PSModulePath, no other copy in a per-user module folder (`<Documents>\PowerShell`

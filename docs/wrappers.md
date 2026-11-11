@@ -185,7 +185,7 @@ Direct Windows/MSVC backend. This is the wrapper invoked by `cargo-route` when t
 5. Starts (or reuses) the selected sccache endpoint via cross-process mutex, without consolidating other processes.
 6. Runs preflight (`check`/`clippy`/`fmt`/`deny`) if enabled.
 7. Rewrites `cargo test` -> `cargo nextest run` if cargo-nextest is installed.
-8. Executes `rustup run <toolchain> cargo @args`.
+8. Executes `rustup run <toolchain> cargo @args`. A shared `CARGO_TARGET_DIR` is passed as `--target-dir` and removed from cargo's environment for the call, and CargoTools' own `CARGO_*` switches (`CARGO_USE_LLD`, `CARGO_PREFLIGHT_*`, `CARGO_AUTO_COPY`, ...) are hidden from it, because sccache hashes every `CARGO_*` variable rustc inherits and a different value gives each checkout a separate cache.
 9. On failure, reports cache health and shared-log observations while preserving the original Cargo result. It does not automatically replay the command or force a cache restart.
 10. Auto-copies build outputs from shared `CARGO_TARGET_DIR` to local `./target/` if applicable.
 
