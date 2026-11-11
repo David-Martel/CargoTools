@@ -31,6 +31,12 @@
   that follows a build rebuilt its arguments from a fixed list of scope flags and dropped
   `--target-dir`, so it compiled the tests into the default target; the flag is now forwarded. Covered
   in `Tests/BuildOutput.Tests.ps1` and the wrapper contract tests.
+- **Fix: `Add-RustFlags` no longer appends a flag twice or drops the second flag.** `RUSTFLAGS` is part
+  of every sccache key. The helper appended unconditionally, so repeated calls in one session grew the
+  string and every length was a new key. It also took a single parameter, so
+  `Add-RustFlags '-C lto=thin' '-C codegen-units=1'` (`--release-optimized`) silently dropped
+  `codegen-units=1`. It now accepts several flags and adds each only if that word sequence is not
+  already present. Covered in `Tests/SccacheCacheKey.Tests.ps1`.
 - **New: `tools/Test-CargoToolsInstall.ps1` checks a host's install.** In fresh `pwsh -NoProfile`,
   `pwsh` and Windows PowerShell 5.1 sessions (and over ssh with `-SshTarget`) it requires exactly
   one CargoTools on PSModulePath, no other copy in a per-user module folder (`<Documents>\PowerShell`

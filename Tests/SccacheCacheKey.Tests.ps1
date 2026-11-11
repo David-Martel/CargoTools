@@ -327,3 +327,44 @@ Describe 'Initialize-CargoEnv SCCACHE_SERVER_PORT' {
         $env:SCCACHE_SERVER_PORT | Should -Be '4811'
     }
 }
+
+Describe 'Add-RustFlags' {
+    # Protects: RUSTFLAGS, which is part of every sccache key, is the same string on every call of the same build.
+    # Detects: appending a flag again on each Initialize-CargoEnv/linker call (RUSTFLAGS grew without bound in a
+    # long session, each length a new key), and dropping the second flag of a two-flag call.
+    BeforeEach { $script:SavedRustFlags = $env:RUSTFLAGS; Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue }
+    AfterEach { if ($null -eq $script:SavedRustFlags) { Remove-Item Env:RUSTFLAGS -ErrorAction SilentlyContinue } else { $env:RUSTFLAGS = $script:SavedRustFlags } }
+
+    It 'adds a flag to an empty RUSTFLAGS' {
+        & $script:CargoModule { Add-RustFlags '-C target-cpu=native' }
+        $env:RUSTFLAGS | Should -Be '-C target-cpu=native'
+    }
+
+    It 'does not append a flag that is already present, however often it is called' {
+        & $script:CargoModule { 1..5 | ForEach-Object { Add-RustFlags '-C target-cpu=native' } }
+        $env:RUSTFLAGS | Should -Be '-C target-cpu=native'
+    }
+
+    It 'appends a different flag after an existing one' {
+        $env:RUSTFLAGS = '-C debuginfo=1'
+        & $script:CargoModule { Add-RustFlags '-C target-cpu=native'; Add-RustFlags '-C debuginfo=1' }
+        $env:RUSTFLAGS | Should -Be '-C debuginfo=1 -C target-cpu=native'
+    }
+
+    It 'applies every flag of a multi-flag call (the second used to be dropped)' {
+        & $script:CargoModule { Add-RustFlags '-C lto=thin' '-C codegen-units=1' }
+        $env:RUSTFLAGS | Should -Be '-C lto=thin -C codegen-units=1'
+    }
+
+    It 'treats differing whitespace as the same flag and does not match inside another flag' {
+        $env:RUSTFLAGS = '-C   lto=thin -C link-arg=/STACK:8388608'
+        & $script:CargoModule { Add-RustFlags '-C lto=thin'; Add-RustFlags '-C link-arg=/STACK:8' }
+        $env:RUSTFLAGS | Should -Be '-C lto=thin -C link-arg=/STACK:8388608 -C link-arg=/STACK:8'
+    }
+
+    It 'ignores an empty or null flag' {
+        $env:RUSTFLAGS = '-C debuginfo=1'
+        & $script:CargoModule { Add-RustFlags ''; Add-RustFlags $null }
+        $env:RUSTFLAGS | Should -Be '-C debuginfo=1'
+    }
+}

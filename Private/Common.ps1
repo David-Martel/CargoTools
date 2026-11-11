@@ -172,12 +172,25 @@ function Get-EnvValue {
 }
 
 function Add-RustFlags {
-    param([string]$NewFlags)
-    if ([string]::IsNullOrWhiteSpace($NewFlags)) { return }
-    if ($env:RUSTFLAGS) {
-        $env:RUSTFLAGS = "$env:RUSTFLAGS $NewFlags"
-    } else {
-        $env:RUSTFLAGS = $NewFlags
+    <#
+    .SYNOPSIS
+    Appends flags to RUSTFLAGS, skipping any that are already there.
+    .DESCRIPTION
+    RUSTFLAGS is part of every sccache key, so it must be the same string on every call of the same
+    build. The wrapper runs Initialize-CargoEnv and the linker/CPU helpers on each invocation in a
+    long-lived session; appending unconditionally made RUSTFLAGS grow ("-C target-cpu=native -C
+    target-cpu=native ...") and each length was a different cache key. Each argument is one flag
+    (possibly several words, e.g. '-C lto=thin') and is added only if that exact word sequence is not
+    already present. Several flags may be passed in one call.
+    #>
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$NewFlags)
+
+    foreach ($flag in @($NewFlags)) {
+        if ([string]::IsNullOrWhiteSpace($flag)) { continue }
+        $flag = ($flag.Trim() -replace '\s+', ' ')
+        $current = if ($env:RUSTFLAGS) { ($env:RUSTFLAGS.Trim() -replace '\s+', ' ') } else { '' }
+        if ((" $current ").Contains(" $flag ")) { continue }
+        $env:RUSTFLAGS = if ($current) { "$current $flag" } else { $flag }
     }
 }
 
