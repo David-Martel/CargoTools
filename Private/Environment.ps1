@@ -1211,6 +1211,10 @@ function Initialize-CargoEnv {
         }
     } elseif ($sccacheExe) {
         $env:RUSTC_WRAPPER = 'sccache'
+        # cargo reads CARGO_BUILD_RUSTC_WRAPPER as well, and sccache hashes the wrapper's spelling:
+        # the same sccache.exe given as a full path in one place and as `sccache` in another made a
+        # second, disjoint cache (0 of 57 hits on an identical repeat). Use the one bare spelling.
+        if (Test-SccacheRustcWrapper -Wrapper $env:CARGO_BUILD_RUSTC_WRAPPER) { $env:CARGO_BUILD_RUSTC_WRAPPER = 'sccache' }
     } else {
         if (Test-Path Env:RUSTC_WRAPPER) { Remove-Item Env:RUSTC_WRAPPER }
         $env:SCCACHE_DISABLE = '1'

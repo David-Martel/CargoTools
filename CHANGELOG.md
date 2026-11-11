@@ -11,6 +11,11 @@
   second checkout before, 51 of 57 after. `Tests/SccacheCacheKey.Tests.ps1` covers the argument
   rewrite, the hide-and-restore (including when cargo throws) and a guard that fails when the module
   starts reading a new `CARGO_*` variable the pattern does not cover.
+- **Fix: `CARGO_BUILD_RUSTC_WRAPPER` uses the same sccache spelling as `RUSTC_WRAPPER`.** cargo reads
+  both, and sccache hashes the wrapper as written, so the same `sccache.exe` given as a full path in one
+  shell and as `sccache` in another made a second, disjoint cache (0 of 57 hits on an identical repeat).
+  `Initialize-CargoEnv` now rewrites a full-path sccache value to `sccache` when sccache is in use; a
+  different wrapper is left alone. Covered in `Tests/SccacheCacheKey.Tests.ps1`.
 - **New: `tools/Test-CargoToolsInstall.ps1` checks a host's install.** In fresh `pwsh -NoProfile`,
   `pwsh` and Windows PowerShell 5.1 sessions (and over ssh with `-SshTarget`) it requires exactly
   one CargoTools on PSModulePath, no other copy in a per-user module folder (`<Documents>\PowerShell`

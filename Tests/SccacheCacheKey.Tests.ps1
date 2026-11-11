@@ -180,7 +180,7 @@ Describe 'CargoTools private CARGO_* switches' {
     It 'covers every CARGO_* variable the module reads except the ones cargo defines' {
         $cargoDefined = @(
             'CARGO_TARGET_DIR', 'CARGO_HOME', 'CARGO_INCREMENTAL', 'CARGO_BUILD_JOBS', 'CARGO_BUILD_TARGET',
-            'CARGO_TERM_COLOR', 'CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER'
+            'CARGO_TERM_COLOR', 'CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER', 'CARGO_BUILD_RUSTC_WRAPPER'
         )
         $sources = Get-ChildItem -Path (Join-Path $script:ModuleRoot 'Private'), (Join-Path $script:ModuleRoot 'Public') -Filter *.ps1
         $names = $sources | ForEach-Object { Select-String -Path $_.FullName -Pattern 'env:(CARGO_[A-Z0-9_]+)' -AllMatches } |
@@ -194,5 +194,52 @@ Describe 'CargoTools private CARGO_* switches' {
         foreach ($name in 'CARGO_TARGET_DIR', 'CARGO_HOME', 'CARGO_INCREMENTAL', 'CARGO_BUILD_JOBS', 'CARGO_PROFILE_RELEASE_LTO') {
             $name | Should -Not -Match $script:PrivateEnvPattern
         }
+    }
+}
+
+Describe 'Initialize-CargoEnv wrapper spelling' {
+    BeforeEach {
+        # Initialize-CargoEnv runs for real; only the machine-specific lookups are replaced and no sccache
+        # server is contacted.
+        $script:SavedForInit = @{}
+        Get-ChildItem Env: | ForEach-Object { $script:SavedForInit[$_.Name] = $_.Value }
+        $env:CARGOTOOLS_DISABLE_GLOBAL_RUSTFMT_SYNC = '1'
+        $env:CARGO_HOME = Join-Path $TestDrive 'cargo'
+        $env:RUSTUP_HOME = Join-Path $TestDrive 'rustup'
+        Remove-Item Env:SCCACHE_DISABLE -ErrorAction SilentlyContinue
+        Remove-Item Env:CARGO_BUILD_RUSTC_WRAPPER -ErrorAction SilentlyContinue
+        Mock Ensure-MsvcEnv -ModuleName CargoTools {}
+        Mock Ensure-Directory -ModuleName CargoTools {}
+        Mock Resolve-Sccache -ModuleName CargoTools { 'sccache-fixture.exe' }
+        Mock Resolve-CacheRoot -ModuleName CargoTools { $TestDrive }
+        Mock Get-MachineConfig -ModuleName CargoTools { @{ CacheRoot = $TestDrive } }
+        Mock Resolve-FreeSccachePort -ModuleName CargoTools { param($DesiredPort) $DesiredPort }
+    }
+    AfterEach {
+        foreach ($item in @(Get-ChildItem Env:)) {
+            if (-not $script:SavedForInit.ContainsKey($item.Name)) { [Environment]::SetEnvironmentVariable($item.Name, $null) }
+        }
+        foreach ($item in $script:SavedForInit.GetEnumerator()) { [Environment]::SetEnvironmentVariable($item.Key, $item.Value) }
+    }
+
+    It 'rewrites a full-path CARGO_BUILD_RUSTC_WRAPPER for sccache to the bare name' {
+        # Protects: one wrapper spelling in every build. Detects: the same sccache.exe given as a path in
+        # one shell and as `sccache` in another, which sccache hashes as two different wrappers (0 of 57 hits
+        # on an identical repeat).
+        $env:CARGO_BUILD_RUSTC_WRAPPER = 'C:\Users\someone\bin\sccache.exe'
+        Initialize-CargoEnv -CacheRoot $TestDrive
+        $env:RUSTC_WRAPPER | Should -Be 'sccache'
+        $env:CARGO_BUILD_RUSTC_WRAPPER | Should -Be 'sccache'
+    }
+
+    It 'leaves another wrapper in CARGO_BUILD_RUSTC_WRAPPER alone' {
+        $env:CARGO_BUILD_RUSTC_WRAPPER = 'C:\tools\custom-wrapper.exe'
+        Initialize-CargoEnv -CacheRoot $TestDrive
+        $env:CARGO_BUILD_RUSTC_WRAPPER | Should -Be 'C:\tools\custom-wrapper.exe'
+    }
+
+    It 'does not set CARGO_BUILD_RUSTC_WRAPPER when the caller had none' {
+        Initialize-CargoEnv -CacheRoot $TestDrive
+        $env:CARGO_BUILD_RUSTC_WRAPPER | Should -BeNullOrEmpty
     }
 }
