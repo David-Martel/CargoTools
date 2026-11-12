@@ -1,6 +1,42 @@
 # Changelog
 
 ## Unreleased
+- **Fix: a second checkout of the same source now hits the first checkout's sccache entries.** sccache
+  hashes every `CARGO_*` variable that rustc inherits. The wrapper exported a per-checkout
+  `CARGO_TARGET_DIR` and left its own switches (`CARGO_USE_LLD`, `CARGO_PREFLIGHT_*`,
+  `CARGO_AUTO_COPY`, ...) in cargo's environment, so each checkout got a private cache. `Invoke-RustupCargo`
+  now passes the target directory with `Add-CargoTargetDirArg` (before a bare `--`, never when the caller
+  already passed `--target-dir`, and only to subcommands that take it) and hides the private switches
+  for the call, restoring both afterwards. Measured on a private sccache server: 0 of 57 units hit on a
+  second checkout before, 51 of 57 after. `Tests/SccacheCacheKey.Tests.ps1` covers the argument
+  rewrite, the hide-and-restore (including when cargo throws) and a guard that fails when the module
+  starts reading a new `CARGO_*` variable the pattern does not cover.
+- **Fix: `CARGO_BUILD_RUSTC_WRAPPER` uses the same sccache spelling as `RUSTC_WRAPPER`.** cargo reads
+  both, and sccache hashes the wrapper as written, so the same `sccache.exe` given as a full path in one
+  shell and as `sccache` in another made a second, disjoint cache (0 of 57 hits on an identical repeat).
+  `Initialize-CargoEnv` now rewrites a full-path sccache value to `sccache` when sccache is in use; a
+  different wrapper is left alone. Covered in `Tests/SccacheCacheKey.Tests.ps1`.
+- **Fix: an explicit `SCCACHE_SERVER_PORT` is kept.** `Initialize-CargoEnv` ran every port through
+  `Resolve-FreeSccachePort` with the machine cache root, so a private port with no server on it yet was
+  replaced by the port in `resolved-port.txt`, and a free private port was written into that file. A
+  session that meant to use a private sccache server was silently on the machine-wide one, and a later
+  `sccache --stop-server` stopped it (port 4810). `Set-SccacheServerPortEnv` now checks an explicit port
+  without any shared state, keeps it, and warns if it is not usable (the build then runs without
+  sccache). An unset port, and a port CargoTools chose on an earlier call, still converge on the shared
+  server. Both `Environment.ps1` and `Environment-dtm-p1gen7.ps1` use it.
+- **Fix: an explicit `--target-dir` is respected by AutoCopy and by the post-build nextest run.**
+  `Copy-BuildOutputToLocal` copied the shared target into `.\target\<profile>` even when the caller had
+  built into its own `--target-dir`, and an instrumented `sort.exe` overwrote the shared copy that way. It
+  now returns without copying when the arguments carry `--target-dir` (either spelling). The nextest run
+  that follows a build rebuilt its arguments from a fixed list of scope flags and dropped
+  `--target-dir`, so it compiled the tests into the default target; the flag is now forwarded. Covered
+  in `Tests/BuildOutput.Tests.ps1` and the wrapper contract tests.
+- **Fix: `Add-RustFlags` no longer appends a flag twice or drops the second flag.** `RUSTFLAGS` is part
+  of every sccache key. The helper appended unconditionally, so repeated calls in one session grew the
+  string and every length was a new key. It also took a single parameter, so
+  `Add-RustFlags '-C lto=thin' '-C codegen-units=1'` (`--release-optimized`) silently dropped
+  `codegen-units=1`. It now accepts several flags and adds each only if that word sequence is not
+  already present. Covered in `Tests/SccacheCacheKey.Tests.ps1`.
 - **New: `tools/Test-CargoToolsInstall.ps1` checks a host's install.** In fresh `pwsh -NoProfile`,
   `pwsh` and Windows PowerShell 5.1 sessions (and over ssh with `-SshTarget`) it requires exactly
   one CargoTools on PSModulePath, no other copy in a per-user module folder (`<Documents>\PowerShell`

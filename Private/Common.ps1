@@ -172,12 +172,166 @@ function Get-EnvValue {
 }
 
 function Add-RustFlags {
-    param([string]$NewFlags)
-    if ([string]::IsNullOrWhiteSpace($NewFlags)) { return }
-    if ($env:RUSTFLAGS) {
-        $env:RUSTFLAGS = "$env:RUSTFLAGS $NewFlags"
-    } else {
-        $env:RUSTFLAGS = $NewFlags
+    <#
+    .SYNOPSIS
+    Appends flags to RUSTFLAGS, skipping any that are already there.
+    .DESCRIPTION
+    RUSTFLAGS is part of every sccache key, so it must be the same string on every call of the same
+    build. The wrapper runs Initialize-CargoEnv and the linker/CPU helpers on each invocation in a
+    long-lived session; appending unconditionally made RUSTFLAGS grow ("-C target-cpu=native -C
+    target-cpu=native ...") and each length was a different cache key. Each argument is one flag
+    (possibly several words, e.g. '-C lto=thin') and is added only if that exact word sequence is not
+    already present. Several flags may be passed in one call.
+    #>
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$NewFlags)
+
+    foreach ($flag in @($NewFlags)) {
+        if ([string]::IsNullOrWhiteSpace($flag)) { continue }
+        $flag = ($flag.Trim() -replace '\s+', ' ')
+        $current = if ($env:RUSTFLAGS) { ($env:RUSTFLAGS.Trim() -replace '\s+', ' ') } else { '' }
+        $setting = Get-CodegenSetting $flag
+        if ($setting) {
+            # rustc takes the LAST value of a codegen option, so an earlier matching occurrence proves
+            # nothing: `-C debuginfo=1 -C debuginfo=0` still needs `-C debuginfo=1` appended.
+            $last = Get-LastCodegenValue -RustFlags $current -Key $setting.Key
+            if ($null -ne $last -and $last -eq $setting.Value) { continue }
+        } elseif ((" $current ").Contains(" $flag ")) {
+            continue
+        }
+        $env:RUSTFLAGS = if ($current) { "$current $flag" } else { $flag }
+    }
+}
+
+# Codegen options rustc accumulates instead of overriding; for these a repeat is a new entry.
+$script:CumulativeCodegenOptions = @('link-arg', 'link-args', 'llvm-args', 'passes', 'remark')
+
+function ConvertTo-CodegenKey {
+    # rustc treats `_` and `-` in codegen option names alike (debug_info == debug-info).
+    param([string]$Name)
+    return $Name.Replace('_', '-')
+}
+
+function Get-CodegenSetting {
+    # A single last-wins codegen flag as @{ Key; Value }, else $null. Accepts every spelling rustc does:
+    # `-C k=v`, `-Ck=v`, `--codegen k=v` and `--codegen=k=v`.
+    param([string]$Flag)
+    if ($Flag -notmatch '^(?:-C\s*|--codegen(?:\s+|=))([A-Za-z0-9_-]+)(?:=(.*))?$') { return $null }
+    $key = ConvertTo-CodegenKey $Matches[1]
+    if ($key -in $script:CumulativeCodegenOptions) { return $null }
+    $value = if ($null -ne $Matches[2]) { $Matches[2] } else { '' }
+    return @{ Key = $key; Value = $value }
+}
+
+function Get-LastCodegenValue {
+    # The effective (last) value of codegen option $Key in a RUSTFLAGS string, or $null if absent.
+    param([string]$RustFlags, [string]$Key)
+    $last = $null
+    $words = @($RustFlags -split ' ' | Where-Object { $_ })
+    for ($i = 0; $i -lt $words.Count; $i++) {
+        $spec = $null
+        if ($words[$i] -in @('-C', '--codegen') -and $i + 1 -lt $words.Count) { $spec = $words[$i + 1]; $i++ }
+        elseif ($words[$i].StartsWith('--codegen=')) { $spec = $words[$i].Substring('--codegen='.Length) }
+        elseif ($words[$i].Length -gt 2 -and $words[$i].StartsWith('-C')) { $spec = $words[$i].Substring(2) }
+        if (-not $spec) { continue }
+        $parts = $spec -split '=', 2
+        if ((ConvertTo-CodegenKey $parts[0]) -eq (ConvertTo-CodegenKey $Key)) { $last = if ($parts.Count -gt 1) { $parts[1] } else { '' } }
+    }
+    return $last
+}
+
+# Variables this module defines and reads itself. They are not cargo settings.
+$script:CargoToolsPrivateEnvPattern = '^CARGO_(USE_[A-Z]+|PREFLIGHT[A-Z_]*|RA_PREFLIGHT|ROUTE_[A-Z]+|WSL_[A-Z]+|LLM_[A-Z]+|DOCKER_[A-Z]+|AUTO_COPY(_EXAMPLES)?|QUICK_CHECK|VERBOSITY|PROFILE|RAW|LLD_PATH|TIMINGS|RELEASE_LTO|TOOLCHAIN)$'
+
+function Add-CargoTargetDirArg {
+    <#
+    .SYNOPSIS
+    Moves the target directory from CARGO_TARGET_DIR into a --target-dir argument.
+    .DESCRIPTION
+    sccache hashes every CARGO_* variable that rustc inherits, so an exported CARGO_TARGET_DIR makes
+    each distinct directory a separate cache (a build in a second directory missed 57 of 57 units).
+    A command-line flag is not in rustc's environment. This only builds the argument list;
+    Invoke-RustupCargo removes the variable for the duration of the call.
+    Returns the arguments unchanged when the variable is unset, the subcommand does not take the
+    flag, or the caller already passed one. The flag goes before a bare `--` so it is never handed to
+    a test harness or to `cargo run`.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [AllowNull()][string]$TargetDir = $env:CARGO_TARGET_DIR,
+        [string]$PrimaryCommand,
+        [string[]]$ArgsList
+    )
+
+    # cargo-llvm-cov rejects --target-dir ("invalid option", 0.9.1) and reads CARGO_TARGET_DIR instead,
+    # so it keeps the variable. nextest takes the flag only on the subcommands that build.
+    $supported = @('build', 'check', 'clippy', 'test', 'doc', 'run', 'bench', 'rustc', 'rustdoc', 'nextest')
+    if ([string]::IsNullOrWhiteSpace($TargetDir) -or $PrimaryCommand -notin $supported) { return $ArgsList }
+    if ($PrimaryCommand -eq 'nextest') {
+        $sub = $null
+        $seenNextest = $false
+        foreach ($a in $ArgsList) {
+            if ($a -eq '--') { break }
+            if (-not $seenNextest) { if ($a -eq 'nextest') { $seenNextest = $true }; continue }
+            if (-not $a.StartsWith('-')) { $sub = $a; break }
+        }
+        if ($sub -notin @('run', 'r', 'list', 'archive')) { return $ArgsList }
+        # Reusing an archived build rejects build options such as --target-dir.
+        $reuse = '^--(archive-file|archive-format|extract-to|extract-overwrite|persist-extract-tempdir|cargo-metadata|workspace-remap|binaries-metadata|target-dir-remap)(=|$)'
+        foreach ($a in $ArgsList) {
+            if ($a -eq '--') { break }
+            if ($a -match $reuse) { return $ArgsList }
+        }
+    }
+    foreach ($a in $ArgsList) {
+        if ($a -eq '--') { break }
+        if ($a -eq '--target-dir' -or $a.StartsWith('--target-dir=')) { return $ArgsList }
+    }
+
+    $out = New-Object System.Collections.Generic.List[string]
+    $inserted = $false
+    foreach ($a in $ArgsList) {
+        if ($a -eq '--' -and -not $inserted) {
+            $out.Add('--target-dir'); $out.Add($TargetDir); $inserted = $true
+        }
+        $out.Add($a)
+    }
+    if (-not $inserted) { $out.Add('--target-dir'); $out.Add($TargetDir) }
+    return $out.ToArray()
+}
+
+function Invoke-RustupCargo {
+    <#
+    .SYNOPSIS
+    Runs `rustup run <toolchain> cargo ...` with the target directory passed as a flag.
+    .DESCRIPTION
+    See Add-CargoTargetDirArg for why. CARGO_TARGET_DIR is restored afterwards because the wrapper's
+    own post-build steps read it. Output and $LASTEXITCODE behave as for a direct call.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RustupPath,
+        [Parameter(Mandatory)][string]$Toolchain,
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$CargoArgs
+    )
+
+    $savedTargetDir = $env:CARGO_TARGET_DIR
+    $finalArgs = @(Add-CargoTargetDirArg -TargetDir $savedTargetDir -PrimaryCommand (Get-PrimaryCommand $CargoArgs) -ArgsList $CargoArgs)
+    if ($savedTargetDir -and $finalArgs.Count -ne $CargoArgs.Count) { Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue }
+
+    # CargoTools' own switches (CARGO_USE_LLD, CARGO_PREFLIGHT_*, ...) are read by this module, not by
+    # cargo, but they start with CARGO_ and so end up in every sccache key: a build with one toggled
+    # cannot share a cache with a build without it. Hide them from cargo for the call.
+    $savedToggles = @{}
+    foreach ($entry in @(Get-ChildItem Env: | Where-Object { $_.Name -match $script:CargoToolsPrivateEnvPattern })) {
+        $savedToggles[$entry.Name] = $entry.Value
+        Remove-Item "Env:$($entry.Name)" -ErrorAction SilentlyContinue
+    }
+    try {
+        & $RustupPath run $Toolchain cargo @finalArgs
+    } finally {
+        if ($savedTargetDir) { $env:CARGO_TARGET_DIR = $savedTargetDir }
+        foreach ($name in $savedToggles.Keys) { Set-Item "Env:$name" $savedToggles[$name] }
     }
 }
 

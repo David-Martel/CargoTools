@@ -38,7 +38,9 @@ exit /b %result%
         'CARGO_PREFLIGHT_STRICT','CARGO_PREFLIGHT_BLOCKING','CARGO_PREFLIGHT_IDE_GUARD',
         'CARGO_PREFLIGHT_FORCE','CARGOTOOLS_RA_PREFLIGHT','CARGOTOOLS_PREFLIGHT_MODE',
         'CARGOTOOLS_ENABLE_DENY','CARGO_VERBOSITY','CARGO_LLM_DEBUG','CARGO_TIMINGS',
-        'CARGO_QUICK_CHECK','CARGO_RELEASE_LTO','RUSTC_WRAPPER'
+        'CARGO_QUICK_CHECK','CARGO_RELEASE_LTO','RUSTC_WRAPPER',
+        # The wrapper passes this as --target-dir, so a value from the caller's shell changes every argv here.
+        'CARGO_TARGET_DIR'
     )
     $script:StreamSavedEnvironment = @{}
     foreach ($name in $script:StreamEnvironmentNames) { $script:StreamSavedEnvironment[$name]=[Environment]::GetEnvironmentVariable($name) }

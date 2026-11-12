@@ -566,7 +566,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                     [string[]]$fixArgs = @(Get-ClippyFixArgs $passThrough.ToArray())
                     Write-CargoDebug ("Clippy auto-fix arguments: " + (Convert-ArgsToShell $fixArgs))
                     Write-CargoStatus -Phase "Preflight" -Message "Requested auto-fix (clippy --fix + fmt)..." -Type "Info"
-                    & $rustupPath run $toolchain cargo clippy --fix --allow-dirty --allow-staged --allow-no-vcs @fixArgs
+                    Invoke-RustupCargo -RustupPath $rustupPath -Toolchain $toolchain -CargoArgs (@('clippy', '--fix', '--allow-dirty', '--allow-staged', '--allow-no-vcs') + $fixArgs)
                     $autoFixExitCode = $LASTEXITCODE
                     if ($autoFixExitCode -ne 0) {
                         Write-CargoStatus -Phase "Preflight" -Message "Auto-fix failed." -Type "Error"
@@ -709,7 +709,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
 
                 Write-CargoStatus -Phase 'Build' -Message "Running: cargo $($buildArgs -join ' ')" -Type 'Info' -MinVerbosity 2
 
-                & $rustupPath run $toolchain cargo @buildArgs
+                Invoke-RustupCargo -RustupPath $rustupPath -Toolchain $toolchain -CargoArgs $buildArgs
                 $cargoExitCode = $LASTEXITCODE
                 $buildElapsed = (Get-Date) - $buildStartTime
 
@@ -756,6 +756,8 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                     }
 
                     $scopeArgs = New-Object System.Collections.Generic.List[string]
+                    # Where the build wrote its output. Not a scope: it must not replace the --workspace default.
+                    $outputDirArgs = New-Object System.Collections.Generic.List[string]
                     $buildArgsRaw = Normalize-ArgsList (Strip-ArgsAfterDoubleDash $passThrough.ToArray())
                     $removedCmd = $false
                     for ($idx = 0; $idx -lt $buildArgsRaw.Count; $idx++) {
@@ -800,8 +802,18 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                                 }
                                 continue
                             }
+                            '--target-dir' {
+                                if ($idx + 1 -lt $buildArgsRaw.Count) {
+                                    $outputDirArgs.Add('--target-dir')
+                                    $idx++
+                                    $outputDirArgs.Add($buildArgsRaw[$idx])
+                                }
+                                continue
+                            }
                             default {
-                                if ($arg.StartsWith('--package=') -or
+                                if ($arg.StartsWith('--target-dir=')) {
+                                    $outputDirArgs.Add($arg)
+                                } elseif ($arg.StartsWith('--package=') -or
                                     $arg.StartsWith('--features=') -or
                                     $arg.StartsWith('--manifest-path=')) {
                                     $scopeArgs.Add($arg)
@@ -820,6 +832,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                     } else {
                         $nextestArgs += '--workspace'
                     }
+                    $nextestArgs += $outputDirArgs.ToArray()
                     $nextestArgs += '--no-fail-fast'
                     $nextestArgs += @('--no-tests', 'pass')
                     if ($profile -eq 'release') {
@@ -828,7 +841,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                         $nextestArgs += @('--profile', $profile)
                     }
                     Write-CargoStatus -Phase 'PostBuild' -Message "Running: cargo $($nextestArgs -join ' ')" -Type 'Info'
-                    & $rustupPath run $toolchain cargo @nextestArgs
+                    Invoke-RustupCargo -RustupPath $rustupPath -Toolchain $toolchain -CargoArgs $nextestArgs
                     $nextestExitCode = $LASTEXITCODE
                     if ($nextestExitCode -ne 0) {
                         Write-CargoBuildPhase -Phase 'PostBuild' -Failed
@@ -843,6 +856,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                         } else {
                             $docArgs += '--workspace'
                         }
+                        $docArgs += $outputDirArgs.ToArray()
                         $docArgs += '--doc'
                         if ($profile -eq 'release') {
                             $docArgs += '--release'
@@ -850,7 +864,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                             $docArgs += @('--profile', $profile)
                         }
                         Write-CargoStatus -Phase 'PostBuild' -Message "Running: cargo $($docArgs -join ' ')" -Type 'Info'
-                        & $rustupPath run $toolchain cargo @docArgs
+                        Invoke-RustupCargo -RustupPath $rustupPath -Toolchain $toolchain -CargoArgs $docArgs
                         $doctestExitCode = $LASTEXITCODE
                         if ($doctestExitCode -ne 0) {
                             Write-CargoBuildPhase -Phase 'PostBuild' -Failed

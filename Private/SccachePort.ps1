@@ -191,3 +191,47 @@ function Test-SccachePortExcluded {
     }
     return $false
 }
+
+# The port CargoTools itself last wrote to SCCACHE_SERVER_PORT. A value that differs from it was set by the
+# caller; a value equal to it is ours and may be re-resolved on the next Initialize-CargoEnv call.
+$script:CargoToolsAssignedSccachePort = $null
+
+function Set-SccacheServerPortEnv {
+    <#
+    .SYNOPSIS
+    Chooses SCCACHE_SERVER_PORT for this session without overriding an explicit choice.
+    .DESCRIPTION
+    A port the caller set explicitly is kept as is. The shared-server convergence in
+    Resolve-FreeSccachePort (the persisted resolved-port.txt) is only for the default: applied to an
+    explicit private port it silently re-pointed the session at the machine-wide server, so a later
+    `sccache --stop-server` stopped that server (port 4810, 2026-11), and it overwrote the shared state file
+    with the private port. An explicit port is still checked, with no cache root so no state is read or
+    written; if it is excluded or occupied by something that is not sccache, it is kept anyway and a warning
+    says what CargoTools would have chosen (the build then falls back to running without sccache).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$DefaultPort,
+        [Parameter(Mandatory)][string]$CacheRoot,
+        [switch]$SkipValidation
+    )
+
+    $current = $env:SCCACHE_SERVER_PORT
+    $explicit = [bool]$current -and ($current -ne $script:CargoToolsAssignedSccachePort)
+    if (-not $current) {
+        $env:SCCACHE_SERVER_PORT = $DefaultPort
+        $script:CargoToolsAssignedSccachePort = $DefaultPort
+    }
+    if ($SkipValidation) { return }
+
+    if ($explicit) {
+        $checked = Resolve-FreeSccachePort -DesiredPort $env:SCCACHE_SERVER_PORT -WarningAction SilentlyContinue
+        if ($checked -ne $env:SCCACHE_SERVER_PORT) {
+            Write-Warning "SCCACHE_SERVER_PORT=$($env:SCCACHE_SERVER_PORT) is set explicitly but is not free or not sccache; keeping it (CargoTools would have used $checked)."
+        }
+        return
+    }
+
+    $env:SCCACHE_SERVER_PORT = Resolve-FreeSccachePort -DesiredPort $env:SCCACHE_SERVER_PORT -CacheRoot $CacheRoot
+    $script:CargoToolsAssignedSccachePort = $env:SCCACHE_SERVER_PORT
+}

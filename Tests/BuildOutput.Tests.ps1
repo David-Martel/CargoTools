@@ -19,6 +19,7 @@ BeforeAll {
     $script:GetBuildProfile = & $module { ${function:Get-BuildProfile} }
     $script:GetPackageNames = & $module { ${function:Get-PackageNames} }
     $script:TestAutoCopyEnabled = & $module { ${function:Test-AutoCopyEnabled} }
+    $script:GetExplicitTargetDir = & $module { ${function:Get-ExplicitTargetDir} }
 
     # Save env state
     $script:SavedEnv = @{}
@@ -290,6 +291,56 @@ version = "0.1.0"
 
         $localRelease = Join-Path $script:projectDir 'target\release'
         Test-Path (Join-Path $localRelease 'unknown_binary.exe') | Should -BeTrue
+    }
+}
+
+Describe 'Copy-BuildOutputToLocal with an explicit --target-dir' {
+    # Protects: AutoCopy only copies a build that went to the shared target.
+    # Detects: copying anyway when the caller built into its own --target-dir, which hardlinked the shared
+    # copy over .\target\<profile> (an instrumented sort.exe overwrote the shared binary).
+    BeforeEach {
+        $script:projectDir = Join-Path $script:TestRoot "project_$(Get-Random)"
+        $script:sharedTarget = Join-Path $script:TestRoot "shared_$(Get-Random)"
+        New-Item -ItemType Directory -Path $script:projectDir -Force | Out-Null
+        Set-Content -Path (Join-Path $script:projectDir 'Cargo.toml') -Value "[package]`nname = `"testpkg`"`nversion = `"0.1.0`"`n"
+        $releaseDir = Join-Path $script:sharedTarget 'release'
+        New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+        Set-Content -Path (Join-Path $releaseDir 'testpkg.exe') -Value 'shared binary'
+    }
+
+    It 'skips the copy for <Label>' -ForEach @(
+        @{ Label = '--target-dir <path>'; Pass = { param($d) @('build', '--release', '--target-dir', $d) } }
+        @{ Label = '--target-dir=<path>'; Pass = { param($d) @('build', '--release', "--target-dir=$d") } }
+    ) {
+        $private = Join-Path $script:TestRoot "private_$(Get-Random)"
+        $result = & $script:CopyBuildOutputToLocal -Profile 'release' -ProjectRoot $script:projectDir -SharedTarget $script:sharedTarget -ArgsList (& $Pass $private) -Quiet
+        $result | Should -BeFalse
+        Test-Path (Join-Path $script:projectDir 'target\release\testpkg.exe') | Should -BeFalse
+    }
+
+    It 'still copies when no --target-dir was passed (positive control)' {
+        $result = & $script:CopyBuildOutputToLocal -Profile 'release' -ProjectRoot $script:projectDir -SharedTarget $script:sharedTarget -ArgsList @('build', '--release') -Quiet
+        $result | Should -BeTrue
+        Test-Path (Join-Path $script:projectDir 'target\release\testpkg.exe') | Should -BeTrue
+    }
+}
+
+Describe 'Get-ExplicitTargetDir' {
+    It 'returns the value of --target-dir, in either spelling' {
+        (& $script:GetExplicitTargetDir @('build', '--target-dir', 'D:\t')) | Should -Be 'D:\t'
+        (& $script:GetExplicitTargetDir @('build', '--target-dir=D:\t')) | Should -Be 'D:\t'
+    }
+
+    It 'returns nothing when the flag is absent or has no value' {
+        (& $script:GetExplicitTargetDir @('build', '-p', 'x')) | Should -BeNullOrEmpty
+        (& $script:GetExplicitTargetDir @('build', '--target-dir')) | Should -BeNullOrEmpty
+    }
+
+    It 'ignores --target-dir after a bare -- (it belongs to the program being run)' {
+        # Detects: AutoCopy skipping `run -- --target-dir child-output`, whose build still went to the shared target.
+        (& $script:GetExplicitTargetDir @('run', '--', '--target-dir', 'child-output')) | Should -BeNullOrEmpty
+        (& $script:GetExplicitTargetDir @('run', '--', '--target-dir=child-output')) | Should -BeNullOrEmpty
+        (& $script:GetExplicitTargetDir @('run', '--target-dir', 'D:\t', '--', '--target-dir', 'x')) | Should -Be 'D:\t'
     }
 }
 

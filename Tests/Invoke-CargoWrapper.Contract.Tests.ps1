@@ -13,7 +13,8 @@ BeforeAll {
         'CARGO_QUICK_CHECK', 'CARGO_RELEASE_LTO', 'RUSTC_WRAPPER',
         'CARGOTOOLS_CONTRACT_LOG', 'CARGOTOOLS_CONTRACT_FIXTURE',
         'CARGOTOOLS_CONTRACT_SHIM', 'CARGOTOOLS_CONTRACT_PWSH',
-        'CARGOTOOLS_CONTRACT_FAIL_COMMAND', 'CARGOTOOLS_CONTRACT_EXIT'
+        'CARGOTOOLS_CONTRACT_FAIL_COMMAND', 'CARGOTOOLS_CONTRACT_EXIT', 'CARGOTOOLS_CONTRACT_ENVLOG',
+        'CARGO_TARGET_DIR', 'CARGO_USE_LLD'
     )
     foreach ($name in $script:controlledEnvironment) {
         $script:savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
@@ -26,6 +27,9 @@ BeforeAll {
     # selectors, and native PowerShell argv boundary run in every applicable test.
     @'
 [IO.File]::AppendAllText($env:CARGOTOOLS_CONTRACT_LOG, (ConvertTo-Json -InputObject @($args) -Compress) + [Environment]::NewLine)
+if ($env:CARGOTOOLS_CONTRACT_ENVLOG) {
+    [IO.File]::AppendAllText($env:CARGOTOOLS_CONTRACT_ENVLOG, (ConvertTo-Json -InputObject ([ordered]@{ target = $env:CARGO_TARGET_DIR; lld = $env:CARGO_USE_LLD }) -Compress) + [Environment]::NewLine)
+}
 if ($args -contains $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND -and $args -notcontains '--version') {
     exit [int]$env:CARGOTOOLS_CONTRACT_EXIT
 }
@@ -52,6 +56,7 @@ AfterAll {
 
 Describe 'Invoke-CargoWrapper native argv and status contract' {
     BeforeEach {
+        Remove-Item Env:CARGOTOOLS_CONTRACT_ENVLOG -ErrorAction SilentlyContinue
         foreach ($name in $script:controlledEnvironment | Where-Object { $_ -notlike 'CARGOTOOLS_CONTRACT_*' }) {
             [Environment]::SetEnvironmentVariable($name, $null)
         }
@@ -300,6 +305,64 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
         $result[-1] | Should -Be 0
     }
 
+    It 'passes the target directory as --target-dir and keeps CARGO_TARGET_DIR out of cargo''s environment' {
+        # Protects: a build in a second checkout shares sccache entries with the first.
+        # Detects: exporting CARGO_TARGET_DIR (and CargoTools' CARGO_USE_LLD) to rustc, where sccache hashes
+        # both: 0 of 57 units hit on a second checkout, 51 of 57 once they were hidden.
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        $env:CARGOTOOLS_CONTRACT_ENVLOG = Join-Path $TestDrive 'native-env.jsonl'
+        $shared = Join-Path $TestDrive 'shared-target'
+        $env:CARGO_TARGET_DIR = $shared
+        $env:CARGO_USE_LLD = '1'
+        $result = @(Invoke-CargoWrapper -ArgumentList @('build', '-p', 'x'))
+        $calls = @(Read-NativeCall)
+        $calls.Count | Should -Be 1
+        $calls[0] | Should -Be @('run', 'stable', 'cargo', 'build', '-p', 'x', '--target-dir', $shared)
+        $seen = Get-Content -LiteralPath $env:CARGOTOOLS_CONTRACT_ENVLOG | ForEach-Object { $_ | ConvertFrom-Json } | Select-Object -Last 1
+        $seen.target | Should -BeNullOrEmpty
+        $seen.lld | Should -BeNullOrEmpty
+        $env:CARGO_TARGET_DIR | Should -Be $shared
+        $env:CARGO_USE_LLD | Should -Be '1'
+        $result[-1] | Should -Be 0
+    }
+
+    It 'runs the post-build nextest in the same target directory as the build' -ForEach @(
+        @{ Label = 'from CARGO_TARGET_DIR'; ExplicitFlag = $false }
+        @{ Label = 'from an explicit --target-dir'; ExplicitFlag = $true }
+    ) {
+        # Protects: the post-build test run compiles the tests of the code just built, in that build's target.
+        # Detects: nextest silently building into the default target (an instrumented sort.exe overwrote
+        # the shared copy), because the flag was dropped when the wrapper rebuilt the nextest arguments.
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        $env:CARGOTOOLS_RUN_TESTS_AFTER_BUILD = '1'
+        $dir = Join-Path $TestDrive 'target-for-nextest'
+        $buildArgs = @('build', '-p', 'x')
+        if ($ExplicitFlag) { $buildArgs += @('--target-dir', $dir) } else { $env:CARGO_TARGET_DIR = $dir }
+        $result = @(Invoke-CargoWrapper -ArgumentList $buildArgs)
+        $calls = @(Read-NativeCall)
+        $nextest = @($calls | Where-Object { $_ -contains 'nextest' -and $_ -contains '--no-fail-fast' })
+        $nextest.Count | Should -Be 1
+        $at = [array]::IndexOf(@($nextest[0]), '--target-dir')
+        $at | Should -BeGreaterThan -1
+        @($nextest[0])[$at + 1] | Should -Be $dir
+        @($nextest[0] | Where-Object { $_ -eq '--target-dir' }).Count | Should -Be 1
+        $result[-1] | Should -Be 0
+    }
+
+    It 'keeps the --workspace default for the post-build nextest when only --target-dir was given' {
+        # Detects: an explicit --target-dir counting as a package scope, so the post-build tests silently
+        # covered only the default members of a workspace instead of all of it.
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        $env:CARGOTOOLS_RUN_TESTS_AFTER_BUILD = '1'
+        $dir = Join-Path $TestDrive 'target-only'
+        $result = @(Invoke-CargoWrapper -ArgumentList @('build', '--target-dir', $dir))
+        $calls = @(Read-NativeCall)
+        $nextest = @($calls | Where-Object { $_ -contains 'nextest' -and $_ -contains '--no-fail-fast' })
+        $nextest.Count | Should -Be 1
+        @($nextest[0]) | Should -Contain '--workspace'
+        @($nextest[0]) | Should -Contain $dir
+        $result[-1] | Should -Be 0
+    }
     It 'publishes wrapper-only success without launching native Cargo' {
         $global:LASTEXITCODE = 37
         $result = @(Invoke-CargoWrapper --wrapper-help 6>$null)
@@ -416,6 +479,7 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
 
 Describe 'Invoke-CargoWrapper real preflight opt-out contract' {
     BeforeEach {
+        Remove-Item Env:CARGOTOOLS_CONTRACT_ENVLOG -ErrorAction SilentlyContinue
         foreach ($name in $script:controlledEnvironment | Where-Object { $_ -notlike 'CARGOTOOLS_CONTRACT_*' }) {
             [Environment]::SetEnvironmentVariable($name, $null)
         }
