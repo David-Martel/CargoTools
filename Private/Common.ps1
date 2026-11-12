@@ -268,6 +268,12 @@ function Add-CargoTargetDirArg {
             if (-not $a.StartsWith('-')) { $sub = $a; break }
         }
         if ($sub -notin @('run', 'r', 'list', 'archive')) { return $ArgsList }
+        # Reusing an archived build rejects build options such as --target-dir.
+        $reuse = '^--(archive-file|archive-format|extract-to|extract-overwrite|persist-extract-tempdir|cargo-metadata|workspace-remap|binaries-metadata|target-dir-remap)(=|$)'
+        foreach ($a in $ArgsList) {
+            if ($a -eq '--') { break }
+            if ($a -match $reuse) { return $ArgsList }
+        }
     }
     foreach ($a in $ArgsList) {
         if ($a -eq '--') { break }
@@ -298,7 +304,7 @@ function Invoke-RustupCargo {
     param(
         [Parameter(Mandatory)][string]$RustupPath,
         [Parameter(Mandatory)][string]$Toolchain,
-        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$CargoArgs
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$CargoArgs
     )
 
     $savedTargetDir = $env:CARGO_TARGET_DIR

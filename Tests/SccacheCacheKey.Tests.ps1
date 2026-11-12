@@ -103,6 +103,16 @@ Describe 'Add-CargoTargetDirArg' {
         $out | Should -Be @('nextest', $Sub, '--target-dir', 'T:\shared')
     }
 
+    It 'leaves a nextest run that reuses an archive alone (<Opt> rejects build options)' -ForEach @(
+        @{ Opt = '--archive-file' }, @{ Opt = '--binaries-metadata' }, @{ Opt = '--target-dir-remap' }
+    ) {
+        # Detects: `nextest run --archive-file x` failing in argument parsing once CARGO_TARGET_DIR is set.
+        $argsIn = @('nextest', 'run', $Opt, 'x.tar.zst')
+        (& $script:AddCargoTargetDirArg -TargetDir 'T:\shared' -PrimaryCommand 'nextest' -ArgsList $argsIn) | Should -Be $argsIn
+        $joined = @('nextest', 'run', "$Opt=x.tar.zst")
+        (& $script:AddCargoTargetDirArg -TargetDir 'T:\shared' -PrimaryCommand 'nextest' -ArgsList $joined) | Should -Be $joined
+    }
+
     It 'leaves administrative nextest subcommands alone (<Sub> rejects --target-dir)' -ForEach @(
         @{ Sub = 'show-config' }, @{ Sub = 'self' }, @{ Sub = 'store' }
     ) {
@@ -177,6 +187,15 @@ $global:LASTEXITCODE = 0
         $call = Read-Call
         @($call.Args) | Should -Be @('run', 'stable', 'cargo', 'clean')
         $call.Env.CARGO_TARGET_DIR | Should -Be 'T:\shared-target'
+    }
+
+    It 'passes an empty-string argument through to cargo (run -- "")' {
+        # Detects: the mandatory string[] parameter rejecting '' before cargo starts, breaking the pass-through contract.
+        & $script:CargoModule { param($stub) Invoke-RustupCargo -RustupPath $stub -Toolchain stable -CargoArgs @('run', '--', '') } $script:Stub
+        $call = Read-Call
+        $argv = @($call.Args)
+        $argv[-2] | Should -Be '--'
+        $argv[-1] | Should -BeExactly ''
     }
 
     It 'runs bare cargo when there are no arguments (wrapper with no command)' {
