@@ -77,6 +77,8 @@ function Get-ExplicitTargetDir {
 
     if (-not $ArgsList) { return $null }
     for ($i = 0; $i -lt $ArgsList.Count; $i++) {
+        # After a bare `--` the arguments belong to the program that `cargo run` or the test harness runs.
+        if ($ArgsList[$i] -eq '--') { break }
         if ($ArgsList[$i] -eq '--target-dir' -and $i + 1 -lt $ArgsList.Count) { return $ArgsList[$i + 1] }
         if ($ArgsList[$i] -like '--target-dir=*') { return $ArgsList[$i].Substring('--target-dir='.Length) }
     }

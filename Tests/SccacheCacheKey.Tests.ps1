@@ -88,6 +88,27 @@ Describe 'Add-CargoTargetDirArg' {
         $argsIn = @('build')
         (& $script:AddCargoTargetDirArg -TargetDir '' -PrimaryCommand 'build' -ArgsList $argsIn) | Should -Be $argsIn
     }
+
+    It 'leaves cargo llvm-cov alone, because cargo-llvm-cov rejects --target-dir' {
+        # Detects: every coverage run failing with "invalid option '--target-dir'" (cargo-llvm-cov 0.9.1) once
+        # CARGO_TARGET_DIR is set. The variable then stays in the environment, which llvm-cov does read.
+        $argsIn = @('llvm-cov', '--workspace')
+        (& $script:AddCargoTargetDirArg -TargetDir 'T:\shared' -PrimaryCommand 'llvm-cov' -ArgsList $argsIn) | Should -Be $argsIn
+    }
+
+    It 'adds the flag to nextest <Sub>, which accepts it' -ForEach @(
+        @{ Sub = 'run' }, @{ Sub = 'r' }, @{ Sub = 'list' }, @{ Sub = 'archive' }
+    ) {
+        $out = @(& $script:AddCargoTargetDirArg -TargetDir 'T:\shared' -PrimaryCommand 'nextest' -ArgsList @('nextest', $Sub))
+        $out | Should -Be @('nextest', $Sub, '--target-dir', 'T:\shared')
+    }
+
+    It 'leaves administrative nextest subcommands alone (<Sub> rejects --target-dir)' -ForEach @(
+        @{ Sub = 'show-config' }, @{ Sub = 'self' }, @{ Sub = 'store' }
+    ) {
+        $argsIn = @('nextest', $Sub)
+        (& $script:AddCargoTargetDirArg -TargetDir 'T:\shared' -PrimaryCommand 'nextest' -ArgsList $argsIn) | Should -Be $argsIn
+    }
 }
 
 Describe 'Invoke-RustupCargo' {
@@ -360,6 +381,29 @@ Describe 'Add-RustFlags' {
         $env:RUSTFLAGS = '-C   lto=thin -C link-arg=/STACK:8388608'
         & $script:CargoModule { Add-RustFlags '-C lto=thin'; Add-RustFlags '-C link-arg=/STACK:8' }
         $env:RUSTFLAGS | Should -Be '-C lto=thin -C link-arg=/STACK:8388608 -C link-arg=/STACK:8'
+    }
+
+    It 'appends a codegen setting whose later occurrence set another value (last one wins in rustc)' {
+        # Detects: --llm-debug skipping -C debuginfo=1 because an earlier debuginfo=1 matched, although a
+        # later debuginfo=0 was the effective value. Same for conflicting LTO settings.
+        $env:RUSTFLAGS = '-C debuginfo=1 -C debuginfo=0'
+        & $script:CargoModule { Add-RustFlags '-C debuginfo=1' }
+        $env:RUSTFLAGS | Should -Be '-C debuginfo=1 -C debuginfo=0 -C debuginfo=1'
+        $env:RUSTFLAGS = '-Clto=thin -C lto=fat'
+        & $script:CargoModule { Add-RustFlags '-C lto=thin' }
+        $env:RUSTFLAGS | Should -Be '-Clto=thin -C lto=fat -C lto=thin'
+    }
+
+    It 'skips a codegen setting whose last occurrence already has that value, in either spelling' {
+        $env:RUSTFLAGS = '-C debuginfo=0 -Cdebuginfo=1'
+        & $script:CargoModule { Add-RustFlags '-C debuginfo=1' }
+        $env:RUSTFLAGS | Should -Be '-C debuginfo=0 -Cdebuginfo=1'
+    }
+
+    It 'treats cumulative codegen options (link-arg) as a list, not a last-wins setting' {
+        $env:RUSTFLAGS = '-C link-arg=/A -C link-arg=/B'
+        & $script:CargoModule { Add-RustFlags '-C link-arg=/A'; Add-RustFlags '-C link-arg=/C' }
+        $env:RUSTFLAGS | Should -Be '-C link-arg=/A -C link-arg=/B -C link-arg=/C'
     }
 
     It 'ignores an empty or null flag' {

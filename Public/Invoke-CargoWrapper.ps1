@@ -756,6 +756,8 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                     }
 
                     $scopeArgs = New-Object System.Collections.Generic.List[string]
+                    # Where the build wrote its output. Not a scope: it must not replace the --workspace default.
+                    $outputDirArgs = New-Object System.Collections.Generic.List[string]
                     $buildArgsRaw = Normalize-ArgsList (Strip-ArgsAfterDoubleDash $passThrough.ToArray())
                     $removedCmd = $false
                     for ($idx = 0; $idx -lt $buildArgsRaw.Count; $idx++) {
@@ -802,15 +804,16 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                             }
                             '--target-dir' {
                                 if ($idx + 1 -lt $buildArgsRaw.Count) {
-                                    $scopeArgs.Add('--target-dir')
+                                    $outputDirArgs.Add('--target-dir')
                                     $idx++
-                                    $scopeArgs.Add($buildArgsRaw[$idx])
+                                    $outputDirArgs.Add($buildArgsRaw[$idx])
                                 }
                                 continue
                             }
                             default {
-                                if ($arg.StartsWith('--target-dir=') -or
-                                    $arg.StartsWith('--package=') -or
+                                if ($arg.StartsWith('--target-dir=')) {
+                                    $outputDirArgs.Add($arg)
+                                } elseif ($arg.StartsWith('--package=') -or
                                     $arg.StartsWith('--features=') -or
                                     $arg.StartsWith('--manifest-path=')) {
                                     $scopeArgs.Add($arg)
@@ -829,6 +832,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                     } else {
                         $nextestArgs += '--workspace'
                     }
+                    $nextestArgs += $outputDirArgs.ToArray()
                     $nextestArgs += '--no-fail-fast'
                     $nextestArgs += @('--no-tests', 'pass')
                     if ($profile -eq 'release') {
@@ -852,6 +856,7 @@ PowerShell resolves '-p' as an ambiguous prefix of common parameters (-PipelineV
                         } else {
                             $docArgs += '--workspace'
                         }
+                        $docArgs += $outputDirArgs.ToArray()
                         $docArgs += '--doc'
                         if ($profile -eq 'release') {
                             $docArgs += '--release'

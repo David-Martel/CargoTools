@@ -335,6 +335,13 @@ Describe 'Get-ExplicitTargetDir' {
         (& $script:GetExplicitTargetDir @('build', '-p', 'x')) | Should -BeNullOrEmpty
         (& $script:GetExplicitTargetDir @('build', '--target-dir')) | Should -BeNullOrEmpty
     }
+
+    It 'ignores --target-dir after a bare -- (it belongs to the program being run)' {
+        # Detects: AutoCopy skipping `run -- --target-dir child-output`, whose build still went to the shared target.
+        (& $script:GetExplicitTargetDir @('run', '--', '--target-dir', 'child-output')) | Should -BeNullOrEmpty
+        (& $script:GetExplicitTargetDir @('run', '--', '--target-dir=child-output')) | Should -BeNullOrEmpty
+        (& $script:GetExplicitTargetDir @('run', '--target-dir', 'D:\t', '--', '--target-dir', 'x')) | Should -Be 'D:\t'
+    }
 }
 
 Describe 'Test-AutoCopyEnabled' {

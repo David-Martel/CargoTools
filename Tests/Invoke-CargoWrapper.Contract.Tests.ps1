@@ -348,6 +348,21 @@ Describe 'Invoke-CargoWrapper native argv and status contract' {
         @($nextest[0] | Where-Object { $_ -eq '--target-dir' }).Count | Should -Be 1
         $result[-1] | Should -Be 0
     }
+
+    It 'keeps the --workspace default for the post-build nextest when only --target-dir was given' {
+        # Detects: an explicit --target-dir counting as a package scope, so the post-build tests silently
+        # covered only the default members of a workspace instead of all of it.
+        $env:CARGOTOOLS_CONTRACT_FAIL_COMMAND = 'never'
+        $env:CARGOTOOLS_RUN_TESTS_AFTER_BUILD = '1'
+        $dir = Join-Path $TestDrive 'target-only'
+        $result = @(Invoke-CargoWrapper -ArgumentList @('build', '--target-dir', $dir))
+        $calls = @(Read-NativeCall)
+        $nextest = @($calls | Where-Object { $_ -contains 'nextest' -and $_ -contains '--no-fail-fast' })
+        $nextest.Count | Should -Be 1
+        @($nextest[0]) | Should -Contain '--workspace'
+        @($nextest[0]) | Should -Contain $dir
+        $result[-1] | Should -Be 0
+    }
     It 'publishes wrapper-only success without launching native Cargo' {
         $global:LASTEXITCODE = 37
         $result = @(Invoke-CargoWrapper --wrapper-help 6>$null)

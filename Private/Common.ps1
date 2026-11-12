@@ -189,9 +189,46 @@ function Add-RustFlags {
         if ([string]::IsNullOrWhiteSpace($flag)) { continue }
         $flag = ($flag.Trim() -replace '\s+', ' ')
         $current = if ($env:RUSTFLAGS) { ($env:RUSTFLAGS.Trim() -replace '\s+', ' ') } else { '' }
-        if ((" $current ").Contains(" $flag ")) { continue }
+        $setting = Get-CodegenSetting $flag
+        if ($setting) {
+            # rustc takes the LAST value of a codegen option, so an earlier matching occurrence proves
+            # nothing: `-C debuginfo=1 -C debuginfo=0` still needs `-C debuginfo=1` appended.
+            $last = Get-LastCodegenValue -RustFlags $current -Key $setting.Key
+            if ($null -ne $last -and $last -eq $setting.Value) { continue }
+        } elseif ((" $current ").Contains(" $flag ")) {
+            continue
+        }
         $env:RUSTFLAGS = if ($current) { "$current $flag" } else { $flag }
     }
+}
+
+# Codegen options rustc accumulates instead of overriding; for these a repeat is a new entry.
+$script:CumulativeCodegenOptions = @('link-arg', 'link-args', 'llvm-args', 'passes', 'remark')
+
+function Get-CodegenSetting {
+    # A single last-wins `-C key[=value]` or `-Ckey[=value]` flag as @{ Key; Value }, else $null.
+    param([string]$Flag)
+    if ($Flag -notmatch '^-C\s*([A-Za-z0-9_-]+)(?:=(.*))?$') { return $null }
+    $key = $Matches[1]
+    if ($key -in $script:CumulativeCodegenOptions) { return $null }
+    $value = if ($null -ne $Matches[2]) { $Matches[2] } else { '' }
+    return @{ Key = $key; Value = $value }
+}
+
+function Get-LastCodegenValue {
+    # The effective (last) value of codegen option $Key in a RUSTFLAGS string, or $null if absent.
+    param([string]$RustFlags, [string]$Key)
+    $last = $null
+    $words = @($RustFlags -split ' ' | Where-Object { $_ })
+    for ($i = 0; $i -lt $words.Count; $i++) {
+        $spec = $null
+        if ($words[$i] -eq '-C' -and $i + 1 -lt $words.Count) { $spec = $words[$i + 1]; $i++ }
+        elseif ($words[$i].Length -gt 2 -and $words[$i].StartsWith('-C')) { $spec = $words[$i].Substring(2) }
+        if (-not $spec) { continue }
+        $parts = $spec -split '=', 2
+        if ($parts[0] -eq $Key) { $last = if ($parts.Count -gt 1) { $parts[1] } else { '' } }
+    }
+    return $last
 }
 
 # Variables this module defines and reads itself. They are not cargo settings.
@@ -218,8 +255,20 @@ function Add-CargoTargetDirArg {
         [string[]]$ArgsList
     )
 
-    $supported = @('build', 'check', 'clippy', 'test', 'doc', 'run', 'bench', 'rustc', 'rustdoc', 'nextest', 'llvm-cov')
+    # cargo-llvm-cov rejects --target-dir ("invalid option", 0.9.1) and reads CARGO_TARGET_DIR instead,
+    # so it keeps the variable. nextest takes the flag only on the subcommands that build.
+    $supported = @('build', 'check', 'clippy', 'test', 'doc', 'run', 'bench', 'rustc', 'rustdoc', 'nextest')
     if ([string]::IsNullOrWhiteSpace($TargetDir) -or $PrimaryCommand -notin $supported) { return $ArgsList }
+    if ($PrimaryCommand -eq 'nextest') {
+        $sub = $null
+        $seenNextest = $false
+        foreach ($a in $ArgsList) {
+            if ($a -eq '--') { break }
+            if (-not $seenNextest) { if ($a -eq 'nextest') { $seenNextest = $true }; continue }
+            if (-not $a.StartsWith('-')) { $sub = $a; break }
+        }
+        if ($sub -notin @('run', 'r', 'list', 'archive')) { return $ArgsList }
+    }
     foreach ($a in $ArgsList) {
         if ($a -eq '--') { break }
         if ($a -eq '--target-dir' -or $a.StartsWith('--target-dir=')) { return $ArgsList }
