@@ -419,6 +419,19 @@ Describe 'Add-RustFlags' {
         $env:RUSTFLAGS | Should -Be '-C debuginfo=0 -Cdebuginfo=1'
     }
 
+    It 'sees a later override written as --codegen or with an underscore name' {
+        # Detects: `-C debuginfo=1 --codegen debuginfo=0` (or debug_info) being read as debuginfo=1 still in effect.
+        $env:RUSTFLAGS = '-C debuginfo=1 --codegen debuginfo=0'
+        & $script:CargoModule { Add-RustFlags '-C debuginfo=1' }
+        $env:RUSTFLAGS | Should -Be '-C debuginfo=1 --codegen debuginfo=0 -C debuginfo=1'
+        $env:RUSTFLAGS = '-C debuginfo=1 --codegen=debuginfo=0'
+        & $script:CargoModule { Add-RustFlags '-C debuginfo=1' }
+        $env:RUSTFLAGS | Should -Be '-C debuginfo=1 --codegen=debuginfo=0 -C debuginfo=1'
+        $env:RUSTFLAGS = '-C target-cpu=x86-64 -C target_cpu=native'
+        & $script:CargoModule { Add-RustFlags '-C target-cpu=native' }
+        $env:RUSTFLAGS | Should -Be '-C target-cpu=x86-64 -C target_cpu=native'
+    }
+
     It 'treats cumulative codegen options (link-arg) as a list, not a last-wins setting' {
         $env:RUSTFLAGS = '-C link-arg=/A -C link-arg=/B'
         & $script:CargoModule { Add-RustFlags '-C link-arg=/A'; Add-RustFlags '-C link-arg=/C' }

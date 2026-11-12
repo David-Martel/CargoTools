@@ -205,11 +205,18 @@ function Add-RustFlags {
 # Codegen options rustc accumulates instead of overriding; for these a repeat is a new entry.
 $script:CumulativeCodegenOptions = @('link-arg', 'link-args', 'llvm-args', 'passes', 'remark')
 
+function ConvertTo-CodegenKey {
+    # rustc treats `_` and `-` in codegen option names alike (debug_info == debug-info).
+    param([string]$Name)
+    return $Name.Replace('_', '-')
+}
+
 function Get-CodegenSetting {
-    # A single last-wins `-C key[=value]` or `-Ckey[=value]` flag as @{ Key; Value }, else $null.
+    # A single last-wins codegen flag as @{ Key; Value }, else $null. Accepts every spelling rustc does:
+    # `-C k=v`, `-Ck=v`, `--codegen k=v` and `--codegen=k=v`.
     param([string]$Flag)
-    if ($Flag -notmatch '^-C\s*([A-Za-z0-9_-]+)(?:=(.*))?$') { return $null }
-    $key = $Matches[1]
+    if ($Flag -notmatch '^(?:-C\s*|--codegen(?:\s+|=))([A-Za-z0-9_-]+)(?:=(.*))?$') { return $null }
+    $key = ConvertTo-CodegenKey $Matches[1]
     if ($key -in $script:CumulativeCodegenOptions) { return $null }
     $value = if ($null -ne $Matches[2]) { $Matches[2] } else { '' }
     return @{ Key = $key; Value = $value }
@@ -222,11 +229,12 @@ function Get-LastCodegenValue {
     $words = @($RustFlags -split ' ' | Where-Object { $_ })
     for ($i = 0; $i -lt $words.Count; $i++) {
         $spec = $null
-        if ($words[$i] -eq '-C' -and $i + 1 -lt $words.Count) { $spec = $words[$i + 1]; $i++ }
+        if ($words[$i] -in @('-C', '--codegen') -and $i + 1 -lt $words.Count) { $spec = $words[$i + 1]; $i++ }
+        elseif ($words[$i].StartsWith('--codegen=')) { $spec = $words[$i].Substring('--codegen='.Length) }
         elseif ($words[$i].Length -gt 2 -and $words[$i].StartsWith('-C')) { $spec = $words[$i].Substring(2) }
         if (-not $spec) { continue }
         $parts = $spec -split '=', 2
-        if ($parts[0] -eq $Key) { $last = if ($parts.Count -gt 1) { $parts[1] } else { '' } }
+        if ((ConvertTo-CodegenKey $parts[0]) -eq (ConvertTo-CodegenKey $Key)) { $last = if ($parts.Count -gt 1) { $parts[1] } else { '' } }
     }
     return $last
 }
